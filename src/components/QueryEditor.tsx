@@ -1,17 +1,45 @@
-import { useState, useEffect } from 'react';
-import Editor from '@monaco-editor/react';
+import { useState, useEffect, useRef } from 'react';
+import Editor, { type Monaco } from '@monaco-editor/react';
 import { Play } from 'lucide-react';
 import type { Connection } from '../types';
+import type { ColumnInfo } from '../lib/adapters';
+import type { editor } from 'monaco-editor';
+
+// Schema info for autocomplete
+export interface SchemaInfo {
+  tables: string[];
+  columns: Record<string, ColumnInfo[]>; // table name -> columns
+}
 
 interface QueryEditorProps {
   connection: Connection | null;
   selectedTable: string | null;
   onExecute: (sql: string) => void;
   isLoading: boolean;
+  schema?: SchemaInfo;
 }
 
-export function QueryEditor({ connection, selectedTable, onExecute, isLoading }: QueryEditorProps) {
+// SQL keywords for autocomplete
+const SQL_KEYWORDS = [
+  'SELECT', 'FROM', 'WHERE', 'AND', 'OR', 'NOT', 'IN', 'IS', 'NULL', 'LIKE', 'BETWEEN',
+  'ORDER BY', 'GROUP BY', 'HAVING', 'LIMIT', 'OFFSET', 'JOIN', 'LEFT JOIN', 'RIGHT JOIN',
+  'INNER JOIN', 'OUTER JOIN', 'ON', 'AS', 'DISTINCT', 'COUNT', 'SUM', 'AVG', 'MIN', 'MAX',
+  'INSERT INTO', 'VALUES', 'UPDATE', 'SET', 'DELETE FROM', 'CREATE TABLE', 'DROP TABLE',
+  'ALTER TABLE', 'ADD COLUMN', 'DROP COLUMN', 'INDEX', 'UNIQUE', 'PRIMARY KEY', 'FOREIGN KEY',
+  'REFERENCES', 'CASCADE', 'ASC', 'DESC', 'UNION', 'ALL', 'EXISTS', 'CASE', 'WHEN', 'THEN',
+  'ELSE', 'END', 'COALESCE', 'NULLIF', 'CAST', 'TRUE', 'FALSE',
+];
+
+export function QueryEditor({ connection, selectedTable, onExecute, isLoading, schema }: QueryEditorProps) {
   const [sql, setSql] = useState('');
+  const monacoRef = useRef<Monaco | null>(null);
+  const disposableRef = useRef<{ dispose: () => void } | null>(null);
+  const schemaRef = useRef<SchemaInfo | undefined>(schema);
+
+  // Keep schema ref updated
+  useEffect(() => {
+    schemaRef.current = schema;
+  }, [schema]);
 
   // Update SQL when table selection changes
   useEffect(() => {
@@ -20,6 +48,137 @@ export function QueryEditor({ connection, selectedTable, onExecute, isLoading }:
       queueMicrotask(() => setSql(`SELECT * FROM ${selectedTable} LIMIT 100`));
     }
   }, [selectedTable]);
+
+  // Register autocomplete provider when Monaco is ready or schema changes
+  const handleEditorMount = (_editor: editor.IStandaloneCodeEditor, monaco: Monaco) => {
+    monacoRef.current = monaco;
+    
+    // Dispose previous completion provider if exists
+    disposableRef.current?.dispose();
+    
+    // Register completion provider for SQL
+    disposableRef.current = monaco.languages.registerCompletionItemProvider('sql', {
+      triggerCharacters: [' ', '.', ',', '('],
+      provideCompletionItems: (model: editor.ITextModel, position: { lineNumber: number; column: number }) => {
+        const currentSchema = schemaRef.current; // Use ref to get latest schema
+        
+        const word = model.getWordUntilPosition(position);
+        const range = {
+          startLineNumber: position.lineNumber,
+          endLineNumber: position.lineNumber,
+          startColumn: word.startColumn,
+          endColumn: word.endColumn,
+        };
+        
+        // Get text before cursor to determine context
+        const textBeforeCursor = model.getValueInRange({
+          startLineNumber: 1,
+          startColumn: 1,
+          endLineNumber: position.lineNumber,
+          endColumn: position.column,
+        }).toUpperCase();
+        
+        const suggestions: Parameters<typeof monaco.languages.registerCompletionItemProvider>[1] extends { provideCompletionItems: (...args: unknown[]) => infer R } ? R extends { suggestions: infer S } ? S : never : never = [];
+        
+        // Check if we're after a dot (table.column context)
+        const lineText = model.getLineContent(position.lineNumber);
+        const textBeforeDot = lineText.substring(0, position.column - 1);
+        const dotMatch = textBeforeDot.match(/(\w+)\.$/);
+        
+        if (dotMatch && currentSchema?.columns) {
+          // User typed "table." - suggest columns for that table
+          const tableName = dotMatch[1].toLowerCase();
+          const tableColumns = Object.entries(currentSchema.columns).find(
+            ([t]) => t.toLowerCase() === tableName
+          )?.[1];
+          
+          if (tableColumns) {
+            tableColumns.forEach((col) => {
+              suggestions.push({
+                label: col.name,
+                kind: monaco.languages.CompletionItemKind.Field,
+                detail: `${col.type}${col.primaryKey ? ' (PK)' : ''}${col.nullable ? '' : ' NOT NULL'}`,
+                insertText: col.name,
+                range,
+              });
+            });
+          }
+          return { suggestions };
+        }
+        
+        // Detect if we're after FROM, JOIN, INTO, UPDATE, etc. (table context)
+        const isTableContext = /\b(FROM|JOIN|INTO|UPDATE|TABLE)\s+$/i.test(textBeforeCursor) ||
+                              /\b(FROM|JOIN|INTO|UPDATE|TABLE)\s+\w*$/i.test(textBeforeCursor);
+        
+        // Detect if we're in SELECT, WHERE, SET, etc. (column context)  
+        const isColumnContext = /\bSELECT\s+(\w+\s*,\s*)*\w*$/i.test(textBeforeCursor) ||
+                               /\bWHERE\s+.*$/i.test(textBeforeCursor) ||
+                               /\bSET\s+.*$/i.test(textBeforeCursor) ||
+                               /\bAND\s+\w*$/i.test(textBeforeCursor) ||
+                               /\bOR\s+\w*$/i.test(textBeforeCursor) ||
+                               /\bORDER BY\s+.*$/i.test(textBeforeCursor) ||
+                               /\bGROUP BY\s+.*$/i.test(textBeforeCursor);
+
+        // Add SQL keywords
+        SQL_KEYWORDS.forEach((kw) => {
+          if (kw.toUpperCase().startsWith(word.word.toUpperCase())) {
+            suggestions.push({
+              label: kw,
+              kind: monaco.languages.CompletionItemKind.Keyword,
+              detail: 'SQL keyword',
+              insertText: kw,
+              range,
+            });
+          }
+        });
+        
+        // Add table suggestions
+        if (currentSchema?.tables && (isTableContext || !isColumnContext)) {
+          currentSchema.tables.forEach((table) => {
+            suggestions.push({
+              label: table,
+              kind: monaco.languages.CompletionItemKind.Class,
+              detail: 'Table',
+              insertText: table,
+              range,
+            });
+          });
+        }
+        
+        // Add column suggestions (show all columns from all known tables)
+        if (currentSchema?.columns && isColumnContext) {
+          Object.entries(currentSchema.columns).forEach(([tableName, cols]) => {
+            cols.forEach((col) => {
+              suggestions.push({
+                label: col.name,
+                kind: monaco.languages.CompletionItemKind.Field,
+                detail: `${tableName}.${col.name} (${col.type})`,
+                insertText: col.name,
+                range,
+              });
+              // Also suggest table.column format
+              suggestions.push({
+                label: `${tableName}.${col.name}`,
+                kind: monaco.languages.CompletionItemKind.Field,
+                detail: col.type,
+                insertText: `${tableName}.${col.name}`,
+                range,
+              });
+            });
+          });
+        }
+        
+        return { suggestions };
+      },
+    });
+  };
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      disposableRef.current?.dispose();
+    };
+  }, []);
 
   const handleExecute = () => {
     if (!connection || !sql.trim()) return;
@@ -70,8 +229,11 @@ export function QueryEditor({ connection, selectedTable, onExecute, isLoading }:
           defaultLanguage="sql"
           value={sql}
           onChange={(value) => setSql(value || '')}
+          onMount={handleEditorMount}
           theme="vs-dark"
           options={{
+            quickSuggestions: true,
+            suggestOnTriggerCharacters: true,
             minimap: { enabled: false },
             fontSize: 13,
             fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',

@@ -1,13 +1,14 @@
-import { useState, useCallback } from 'react';
-import { QueryClient, QueryClientProvider, useMutation } from '@tanstack/react-query';
+import { useState, useCallback, useMemo } from 'react';
+import { QueryClient, QueryClientProvider, useMutation, useQuery } from '@tanstack/react-query';
 import { RouterProvider, useParams, useNavigate } from '@tanstack/react-router';
 import { router } from './router';
 import { Sidebar } from './components/Sidebar';
-import { QueryEditor } from './components/QueryEditor';
+import { QueryEditor, type SchemaInfo } from './components/QueryEditor';
 import { ResultsTable } from './components/ResultsTable';
 import { executeQuery } from './lib/api';
 import { useLiveQuery } from '@tanstack/react-db';
 import { connectionsCollection } from './lib/collections';
+import { listTables, listColumns, type ColumnInfo } from './lib/adapters';
 import type { SQLResponse } from './types';
 
 const queryClient = new QueryClient();
@@ -25,6 +26,50 @@ function AppContent() {
   );
   
   const activeConnection = (connections?.data ?? []).find((c) => c.id === connectionId);
+
+  // Fetch tables for autocomplete
+  const { data: tables } = useQuery({
+    queryKey: ['tables', connectionId, database],
+    queryFn: () => activeConnection && database 
+      ? listTables(activeConnection.driver, activeConnection.dsn, database) 
+      : [],
+    enabled: !!activeConnection && !!database,
+  });
+
+  // Fetch columns for each table for autocomplete
+  const { data: columnsMap } = useQuery({
+    queryKey: ['columns', connectionId, database, tables],
+    queryFn: async () => {
+      if (!activeConnection || !database || !tables?.length) return {};
+      
+      const results: Record<string, ColumnInfo[]> = {};
+      // Fetch columns for all tables (limit to avoid too many requests)
+      const tablesToFetch = tables.slice(0, 50);
+      
+      await Promise.all(
+        tablesToFetch.map(async (t) => {
+          try {
+            results[t] = await listColumns(activeConnection.driver, activeConnection.dsn, t);
+          } catch {
+            results[t] = [];
+          }
+        })
+      );
+      
+      return results;
+    },
+    enabled: !!activeConnection && !!database && !!tables?.length,
+    staleTime: 5 * 60 * 1000, // Cache for 5 minutes
+  });
+
+  // Build schema info for autocomplete
+  const schema: SchemaInfo | undefined = useMemo(() => {
+    if (!tables) return undefined;
+    return {
+      tables,
+      columns: columnsMap ?? {},
+    };
+  }, [tables, columnsMap]);
 
   const [queryResult, setQueryResult] = useState<{
     response: SQLResponse | null;
@@ -175,6 +220,7 @@ function AppContent() {
             selectedTable={table ?? null}
             onExecute={handleExecute}
             isLoading={mutation.isPending}
+            schema={schema}
           />
         </div>
 
