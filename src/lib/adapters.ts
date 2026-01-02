@@ -87,14 +87,34 @@ export async function listDatabases(driver: string, dsn: string): Promise<string
   });
 }
 
-export async function listTables(driver: string, dsn: string): Promise<string[]> {
+export async function listTables(driver: string, dsn: string, database?: string): Promise<string[]> {
   const queries = QUERIES[driver as keyof typeof QUERIES];
   if (!queries) throw new Error(`Unsupported driver: ${driver}`);
+  
+  // Modify DSN to connect to specific database
+  let modifiedDsn = dsn;
+  if (database) {
+    if (driver === 'postgres') {
+      // PostgreSQL DSN format: postgres://user:pass@host:port/dbname?params
+      const url = new URL(dsn);
+      url.pathname = `/${database}`;
+      modifiedDsn = url.toString();
+    } else if (driver === 'mysql') {
+      // MySQL DSN format: user:pass@tcp(host:port)/dbname
+      const dsnParts = dsn.split('/');
+      if (dsnParts.length > 1) {
+        dsnParts[dsnParts.length - 1] = database;
+        modifiedDsn = dsnParts.join('/');
+      } else {
+        modifiedDsn = `${dsn}/${database}`;
+      }
+    }
+  }
   
   const response = await fetch('/api/sql/query', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ driver, dsn, query: queries.listTables, params: [] }),
+    body: JSON.stringify({ driver, dsn: modifiedDsn, query: queries.listTables, params: [] }),
   });
   
   const data = await response.json();
@@ -102,7 +122,13 @@ export async function listTables(driver: string, dsn: string): Promise<string[]>
   
   // Extract table names from rows
   return (data.rows || []).map((row: Record<string, unknown>) => {
-    return String(row.tablename || row.name || Object.values(row)[0]);
+    // Different drivers return different column names:
+    // - PostgreSQL: tablename
+    // - MySQL: Tables_in_<database_name> (dynamic)
+    // - SQLite: name
+    // So we check for these known patterns, otherwise take first value
+    const value = row.tablename || row.name || row[`Tables_in_${database}`] || Object.values(row)[0];
+    return String(value);
   });
 }
 

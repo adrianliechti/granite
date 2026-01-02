@@ -1,27 +1,32 @@
 import { createRouter, createRoute, createRootRoute } from '@tanstack/react-router';
-import { z } from 'zod';
-
-// Search params schema for query state
-const querySearchSchema = z.object({
-  connectionId: z.string().optional(),
-  database: z.string().optional(),
-  table: z.string().optional(),
-});
-
-export type QuerySearch = z.infer<typeof querySearchSchema>;
 
 // Root route
 const rootRoute = createRootRoute();
 
-// Index route with search params for state
-const indexRoute = createRoute({
+// Index route (home)
+export const indexRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/',
-  validateSearch: querySearchSchema,
+});
+
+// Catch-all routes with params
+const connectionRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '$connectionId',
+});
+
+const databaseRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '$connectionId/$database',
+});
+
+const tableRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '$connectionId/$database/$table',
 });
 
 // Route tree
-const routeTree = rootRoute.addChildren([indexRoute]);
+const routeTree = rootRoute.addChildren([indexRoute, connectionRoute, databaseRoute, tableRoute]);
 
 // Create router
 export const router = createRouter({ routeTree });
@@ -32,5 +37,3 @@ declare module '@tanstack/react-router' {
     router: typeof router;
   }
 }
-
-export { indexRoute };

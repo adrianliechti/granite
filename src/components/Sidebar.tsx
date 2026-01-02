@@ -61,7 +61,7 @@ export function Sidebar({
 
   const { data: tables } = useQuery({
     queryKey: ['tables', activeConnectionId, activeDatabase],
-    queryFn: () => activeConnection ? listTables(activeConnection.driver, activeConnection.dsn) : [],
+    queryFn: () => activeConnection && activeDatabase ? listTables(activeConnection.driver, activeConnection.dsn, activeDatabase) : [],
     enabled: !!activeConnection && !!activeDatabase,
   });
 

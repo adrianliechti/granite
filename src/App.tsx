@@ -1,7 +1,7 @@
 import { useState, useCallback } from 'react';
 import { QueryClient, QueryClientProvider, useMutation } from '@tanstack/react-query';
-import { RouterProvider, useSearch, useNavigate } from '@tanstack/react-router';
-import { router, indexRoute } from './router';
+import { RouterProvider, useParams, useNavigate } from '@tanstack/react-router';
+import { router } from './router';
 import { Sidebar } from './components/Sidebar';
 import { QueryEditor } from './components/QueryEditor';
 import { ResultsTable } from './components/ResultsTable';
@@ -13,14 +13,18 @@ import type { SQLResponse } from './types';
 const queryClient = new QueryClient();
 
 function AppContent() {
-  const search = useSearch({ from: indexRoute.id });
+  const params = useParams({ strict: false });
   const navigate = useNavigate();
+  
+  const connectionId = params.connectionId;
+  const database = params.database;
+  const table = params.table;
   
   const connections = useLiveQuery((query) =>
     query.from({ connections: connectionsCollection }).orderBy(({ connections }) => connections.createdAt, 'desc')
   );
   
-  const activeConnection = (connections?.data ?? []).find((c) => c.id === search.connectionId);
+  const activeConnection = (connections?.data ?? []).find((c) => c.id === connectionId);
 
   const [queryResult, setQueryResult] = useState<{
     response: SQLResponse | null;
@@ -54,34 +58,39 @@ function AppContent() {
     mutation.mutate(sql);
   }, [mutation]);
 
-  const handleSelectConnection = useCallback((connectionId: string | null) => {
-    navigate({
-      to: '/',
-      search: { connectionId: connectionId ?? undefined },
-    });
+  const handleSelectConnection = useCallback((connId: string | null) => {
+    if (!connId) {
+      navigate({ to: '/' });
+    } else {
+      navigate({ to: `/${connId}` });
+    }
   }, [navigate]);
 
-  const handleSelectDatabase = useCallback((database: string | null) => {
-    navigate({
-      to: '/',
-      search: { ...search, database: database ?? undefined, table: undefined },
-    });
-  }, [navigate, search]);
+  const handleSelectDatabase = useCallback((db: string | null) => {
+    // If db is null, don't navigate - just deselect
+    if (!db) return;
+    if (!connectionId) return;
+    navigate({ to: `/${connectionId}/${db}` });
+  }, [navigate, connectionId]);
 
-  const handleSelectTable = useCallback((table: string | null) => {
-    navigate({
-      to: '/',
-      search: { ...search, table: table ?? undefined },
-    });
-  }, [navigate, search]);
+  const handleSelectTable = useCallback((tbl: string | null) => {
+    // If tbl is null, don't navigate - just deselect
+    if (!tbl) return;
+    if (!connectionId || !database) return;
+    navigate({ to: `/${connectionId}/${database}/${tbl}` });
+    // Auto-execute query when table is selected
+    if (activeConnection) {
+      mutation.mutate(`SELECT * FROM ${tbl} LIMIT 100`);
+    }
+  }, [navigate, connectionId, database, activeConnection, mutation]);
 
   return (
     <div className="h-screen flex bg-neutral-50 dark:bg-[#0d0d0d] py-2 pr-2 pl-1 gap-2">
       {/* Sidebar */}
       <Sidebar
-        activeConnectionId={search.connectionId ?? null}
-        activeDatabase={search.database ?? null}
-        activeTable={search.table ?? null}
+        activeConnectionId={connectionId ?? null}
+        activeDatabase={database ?? null}
+        activeTable={table ?? null}
         onSelectConnection={handleSelectConnection}
         onSelectDatabase={handleSelectDatabase}
         onSelectTable={handleSelectTable}
@@ -93,7 +102,7 @@ function AppContent() {
         <div className="flex-1 min-h-0">
           <QueryEditor
             connection={activeConnection ?? null}
-            selectedTable={search.table ?? null}
+            selectedTable={table ?? null}
             onExecute={handleExecute}
             isLoading={mutation.isPending}
           />
