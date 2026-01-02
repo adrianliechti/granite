@@ -66,16 +66,12 @@ function AppContent() {
     }
   }, [navigate]);
 
-  const handleSelectDatabase = useCallback((db: string | null) => {
-    // If db is null, don't navigate - just deselect
-    if (!db) return;
+  const handleSelectDatabase = useCallback((db: string) => {
     if (!connectionId) return;
     navigate({ to: `/${connectionId}/${db}` });
   }, [navigate, connectionId]);
 
-  const handleSelectTable = useCallback((tbl: string | null) => {
-    // If tbl is null, don't navigate - just deselect
-    if (!tbl) return;
+  const handleSelectTable = useCallback((tbl: string) => {
     if (!connectionId || !database) return;
     navigate({ to: `/${connectionId}/${database}/${tbl}` });
     // Auto-execute query when table is selected
@@ -83,6 +79,80 @@ function AppContent() {
       mutation.mutate(`SELECT * FROM ${tbl} LIMIT 100`);
     }
   }, [navigate, connectionId, database, activeConnection, mutation]);
+
+  // Handle cell update - generates and executes UPDATE SQL
+  const handleUpdateCell = useCallback(async (
+    originalRow: Record<string, unknown>,
+    columnId: string,
+    newValue: unknown
+  ) => {
+    if (!activeConnection || !table) return;
+    
+    // Find the primary key column (assume first column or 'id')
+    const pkColumn = queryResult?.response?.columns?.[0] ?? 'id';
+    const pkValue = originalRow[pkColumn];
+    
+    if (pkValue === undefined) {
+      console.error('Cannot update: no primary key found');
+      return;
+    }
+    
+    // Format value for SQL
+    const formatValue = (val: unknown): string => {
+      if (val === null) return 'NULL';
+      if (typeof val === 'number') return String(val);
+      if (typeof val === 'boolean') return val ? 'TRUE' : 'FALSE';
+      return `'${String(val).replace(/'/g, "''")}'`;
+    };
+    
+    const sql = `UPDATE ${table} SET ${columnId} = ${formatValue(newValue)} WHERE ${pkColumn} = ${formatValue(pkValue)}`;
+    
+    try {
+      await executeQuery({
+        driver: activeConnection.driver,
+        dsn: activeConnection.dsn,
+        query: sql,
+      });
+    } catch (error) {
+      console.error('Update failed:', error);
+    }
+  }, [activeConnection, table, queryResult?.response?.columns]);
+
+  // Handle row delete - generates and executes DELETE SQL
+  const handleDeleteRow = useCallback(async (row: Record<string, unknown>) => {
+    if (!activeConnection || !table) return;
+    
+    // Find the primary key column (assume first column or 'id')
+    const pkColumn = queryResult?.response?.columns?.[0] ?? 'id';
+    const pkValue = row[pkColumn];
+    
+    if (pkValue === undefined) {
+      console.error('Cannot delete: no primary key found');
+      return;
+    }
+    
+    // Format value for SQL
+    const formatValue = (val: unknown): string => {
+      if (val === null) return 'NULL';
+      if (typeof val === 'number') return String(val);
+      if (typeof val === 'boolean') return val ? 'TRUE' : 'FALSE';
+      return `'${String(val).replace(/'/g, "''")}'`;
+    };
+    
+    const sql = `DELETE FROM ${table} WHERE ${pkColumn} = ${formatValue(pkValue)}`;
+    
+    try {
+      await executeQuery({
+        driver: activeConnection.driver,
+        dsn: activeConnection.dsn,
+        query: sql,
+      });
+      // Refresh the table data
+      mutation.mutate(`SELECT * FROM ${table} LIMIT 100`);
+    } catch (error) {
+      console.error('Delete failed:', error);
+    }
+  }, [activeConnection, table, queryResult?.response?.columns, mutation]);
 
   return (
     <div className="h-screen flex bg-neutral-50 dark:bg-[#0d0d0d] py-2 pr-2 pl-1 gap-2">
@@ -114,6 +184,9 @@ function AppContent() {
             response={queryResult?.response ?? null}
             duration={queryResult?.duration ?? 0}
             isLoading={mutation.isPending}
+            tableName={table}
+            onUpdateCell={handleUpdateCell}
+            onDeleteRow={handleDeleteRow}
           />
         </div>
       </main>

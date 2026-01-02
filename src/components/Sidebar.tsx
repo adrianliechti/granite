@@ -11,8 +11,8 @@ interface SidebarProps {
   activeDatabase: string | null;
   activeTable: string | null;
   onSelectConnection: (connectionId: string | null) => void;
-  onSelectDatabase: (database: string | null) => void;
-  onSelectTable: (table: string | null) => void;
+  onSelectDatabase: (database: string) => void;
+  onSelectTable: (table: string) => void;
 }
 
 const driverColors: Record<string, string> = {
@@ -106,8 +106,6 @@ export function Sidebar({
     connectionsCollection.delete(id);
     if (activeConnectionId === id) {
       onSelectConnection(null);
-      onSelectDatabase(null);
-      onSelectTable(null);
     }
   };
 
@@ -162,8 +160,6 @@ export function Sidebar({
                           onClick={() => {
                             onSelectConnection(conn.id);
                             toggle(conn.id);
-                            onSelectDatabase(null);
-                            onSelectTable(null);
                           }}
                         >
                           <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${getStatusColor(isActive)}`} />
@@ -204,7 +200,6 @@ export function Sidebar({
                                     onClick={() => {
                                       onSelectDatabase(db);
                                       toggle(`${conn.id}:${db}`);
-                                      onSelectTable(null);
                                     }}
                                   >
                                     <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${isDbActive ? 'bg-blue-500' : 'bg-neutral-400'}`} />
