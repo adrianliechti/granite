@@ -14,9 +14,10 @@ export default defineConfig({
   ],
   server: {
     proxy: {
-      '/sql': {
+      '/api': {
         target: 'http://127.0.0.1:7777',
         changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/api/, ''),
       }
     },
   },
