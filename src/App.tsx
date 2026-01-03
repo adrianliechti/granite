@@ -7,7 +7,7 @@ import { QueryEditor, type SchemaInfo } from './components/QueryEditor';
 import { ResultsTable } from './components/ResultsTable';
 import { useLiveQuery } from '@tanstack/react-db';
 import { connectionsCollection } from './lib/collections';
-import { listTables, listColumns, selectAllQuery, executeScript, type ColumnInfo } from './lib/adapters';
+import { listTables, listColumns, selectAllQuery, executeQuery, type ColumnInfo } from './lib/adapters';
 import type { SQLResponse } from './types';
 
 const queryClient = new QueryClient();
@@ -80,8 +80,7 @@ function AppContent() {
       if (!activeConnection) throw new Error('No connection selected');
       const start = performance.now();
       
-      // executeScript handles multi-statement for Oracle, single query for others
-      const response = await executeScript(
+      const response = await executeQuery(
         activeConnection.driver,
         activeConnection.dsn,
         sql
@@ -155,7 +154,7 @@ function AppContent() {
     const sql = `UPDATE ${table} SET ${columnId} = ${formatValue(newValue)} WHERE ${pkColumn} = ${formatValue(pkValue)}`;
     
     try {
-      await executeScript(
+      await executeQuery(
         activeConnection.driver,
         activeConnection.dsn,
         sql
@@ -189,7 +188,7 @@ function AppContent() {
     const sql = `DELETE FROM ${table} WHERE ${pkColumn} = ${formatValue(pkValue)}`;
     
     try {
-      await executeScript(
+      await executeQuery(
         activeConnection.driver,
         activeConnection.dsn,
         sql

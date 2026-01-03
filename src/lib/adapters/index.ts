@@ -27,8 +27,8 @@ export function getAdapter(driver: string): DatabaseAdapter {
   return adapter;
 }
 
-// Helper to execute a query via the backend API
-async function executeQueryRaw(driver: string, dsn: string, query: string): Promise<QueryResult> {
+// Execute a query via the backend API
+export async function executeQuery(driver: string, dsn: string, query: string): Promise<QueryResult> {
   const response = await fetch('/api/sql/query', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -43,25 +43,12 @@ async function executeQueryRaw(driver: string, dsn: string, query: string): Prom
   return response.json();
 }
 
-// Execute a SQL script - uses adapter's executeScript if available (e.g., Oracle multi-statement)
-export async function executeScript(driver: string, dsn: string, sql: string): Promise<QueryResult> {
-  const adapter = getAdapter(driver);
-  const exec = (query: string) => executeQueryRaw(driver, dsn, query);
-  
-  if (adapter.executeScript) {
-    return adapter.executeScript(sql, exec);
-  }
-  
-  // Default: execute as single query
-  return exec(sql);
-}
-
 // High-level API functions that use the adapters
 
 export async function listDatabases(driver: string, dsn: string): Promise<string[]> {
   const adapter = getAdapter(driver);
   const query = adapter.listDatabasesQuery();
-  const data = await executeQueryRaw(driver, dsn, query);
+  const data = await executeQuery(driver, dsn, query);
   return adapter.parseDatabaseNames(data.rows || []);
 }
 
@@ -72,7 +59,7 @@ export async function listTables(driver: string, dsn: string, database?: string)
   const modifiedDsn = database ? adapter.modifyDsnForDatabase(dsn, database) : dsn;
   const query = adapter.listTablesQuery();
   
-  const data = await executeQueryRaw(driver, modifiedDsn, query);
+  const data = await executeQuery(driver, modifiedDsn, query);
   
   return adapter.parseTableNames(data.rows || [], database);
 }
@@ -81,7 +68,7 @@ export async function listColumns(driver: string, dsn: string, table: string): P
   const adapter = getAdapter(driver);
   const query = adapter.listColumnsQuery(table);
   
-  const data = await executeQueryRaw(driver, dsn, query);
+  const data = await executeQuery(driver, dsn, query);
   
   return adapter.parseColumns(data.rows || []);
 }
