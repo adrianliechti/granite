@@ -151,14 +151,4 @@ export interface QueryExecution {
   duration: number;
 }
 
-// ============================================================================
-// App Types
-// ============================================================================
 
-// App preferences
-export interface AppPreferences {
-  id: string;
-  theme: 'light' | 'dark';
-  activeConnectionId: string | null;
-  sidebarWidth: number;
-}

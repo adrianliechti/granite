@@ -83,48 +83,50 @@ export function UploadModal({ connection, container, currentPath, onClose }: Upl
 
         {/* Form */}
         <form onSubmit={handleSubmit} className="p-5 space-y-4">
-          {/* Destination info */}
-          <div className="text-xs text-neutral-500 dark:text-neutral-400">
-            Uploading to{' '}
-            <span className="font-medium text-neutral-700 dark:text-neutral-300">
-              {container}
-              {currentPath && `/${currentPath.replace(/\/$/, '')}`}
-            </span>
-          </div>
-
           {/* File selector */}
-          <div className="space-y-1.5">
-            <label className="text-xs font-medium text-neutral-600 dark:text-neutral-400">
-              Select File
-            </label>
+          <div>
             <input
               ref={fileInputRef}
               type="file"
               onChange={handleFileSelect}
               className="hidden"
             />
-            {selectedFile ? (
-              <div className="flex items-center gap-3 p-3 border border-neutral-200 dark:border-neutral-700 rounded-lg bg-neutral-50 dark:bg-neutral-800/50">
-                <div className="w-10 h-10 rounded-lg bg-blue-500/10 flex items-center justify-center">
-                  <File className="w-5 h-5 text-blue-500" />
+            
+            {/* Object key input - shown above file when selected */}
+            {selectedFile && (
+              <div className="space-y-3">
+                <input
+                  type="text"
+                  value={objectKey}
+                  onChange={(e) => setObjectKey(e.target.value)}
+                  placeholder="path/to/file.txt"
+                  className="w-full px-3 py-2 text-sm font-mono border border-neutral-200 dark:border-neutral-700 rounded-lg bg-white dark:bg-neutral-800 text-neutral-900 dark:text-neutral-100 placeholder:text-neutral-400 focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500"
+                  disabled={uploadMutation.isPending}
+                />
+                <div className="flex items-center gap-3 p-3 border border-neutral-200 dark:border-neutral-700 rounded-lg bg-neutral-50 dark:bg-neutral-800/50">
+                  <div className="w-10 h-10 rounded-lg bg-blue-500/10 flex items-center justify-center">
+                    <File className="w-5 h-5 text-blue-500" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium text-neutral-900 dark:text-neutral-100 truncate">
+                      {selectedFile.name}
+                    </p>
+                    <p className="text-xs text-neutral-500 dark:text-neutral-400">
+                      {formatFileSize(selectedFile.size)} • {selectedFile.type || 'Unknown type'}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => fileInputRef.current?.click()}
+                    className="px-3 py-1.5 text-xs font-medium text-blue-500 hover:bg-blue-500/10 rounded-lg transition-colors"
+                  >
+                    Change
+                  </button>
                 </div>
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium text-neutral-900 dark:text-neutral-100 truncate">
-                    {selectedFile.name}
-                  </p>
-                  <p className="text-xs text-neutral-500 dark:text-neutral-400">
-                    {formatFileSize(selectedFile.size)} • {selectedFile.type || 'Unknown type'}
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => fileInputRef.current?.click()}
-                  className="px-3 py-1.5 text-xs font-medium text-blue-500 hover:bg-blue-500/10 rounded-lg transition-colors"
-                >
-                  Change
-                </button>
               </div>
-            ) : (
+            )}
+            
+            {!selectedFile && (
               <button
                 type="button"
                 onClick={() => fileInputRef.current?.click()}
@@ -139,26 +141,6 @@ export function UploadModal({ connection, container, currentPath, onClose }: Upl
               </button>
             )}
           </div>
-
-          {/* Object key input */}
-          {selectedFile && (
-            <div className="space-y-1.5">
-              <label className="text-xs font-medium text-neutral-600 dark:text-neutral-400">
-                Object Key (Path)
-              </label>
-              <input
-                type="text"
-                value={objectKey}
-                onChange={(e) => setObjectKey(e.target.value)}
-                placeholder="path/to/file.txt"
-                className="w-full px-3 py-2 text-sm font-mono border border-neutral-200 dark:border-neutral-700 rounded-lg bg-white dark:bg-neutral-800 text-neutral-900 dark:text-neutral-100 placeholder:text-neutral-400 focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500"
-                disabled={uploadMutation.isPending}
-              />
-              <p className="text-[11px] text-neutral-400 dark:text-neutral-500">
-                Use forward slashes to create a folder structure (e.g., folder/subfolder/file.pdf)
-              </p>
-            </div>
-          )}
 
           {/* Error message */}
           {uploadMutation.error && (

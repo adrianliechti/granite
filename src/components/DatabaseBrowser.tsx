@@ -1,28 +1,31 @@
 import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useParams } from '@tanstack/react-router';
 import { Plus, Database, Table } from 'lucide-react';
 import { listDatabases, listTables, createDatabase, supportsCreateDatabase } from '../lib/adapters';
 import type { DatabaseConnection } from '../types';
 
 interface DatabaseBrowserProps {
   connection: DatabaseConnection;
-  activeDatabase: string | null;
-  activeTable: string | null;
   expanded: Set<string>;
   onToggle: (key: string) => void;
   onSelectDatabase: (database: string) => void;
-  onSelectTable: (table: string) => void;
+  onSelectTable: (database: string, table: string) => void;
 }
 
 export function DatabaseBrowser({
   connection,
-  activeDatabase,
-  activeTable,
   expanded,
   onToggle,
   onSelectDatabase,
   onSelectTable,
 }: DatabaseBrowserProps) {
+  // Get active database/table from URL
+  const params = useParams({ strict: false });
+  const isActiveConnection = params.connectionId === connection.id;
+  const activeDatabase = isActiveConnection ? (params.database ?? null) : null;
+  const activeTable = isActiveConnection ? (params.table ?? null) : null;
+
   const queryClient = useQueryClient();
   const [createDbModal, setCreateDbModal] = useState<{ open: boolean }>({ open: false });
   const [newDbName, setNewDbName] = useState('');
@@ -147,7 +150,7 @@ export function DatabaseBrowser({
                           ? 'bg-blue-500/10 dark:bg-blue-500/20'
                           : 'hover:bg-neutral-100 dark:hover:bg-white/5'
                       }`}
-                      onClick={() => onSelectTable(table)}
+                      onClick={() => onSelectTable(db, table)}
                     >
                       <Table className={`w-3.5 h-3.5 shrink-0 ${activeTable === table ? 'text-blue-500' : 'text-neutral-400 dark:text-neutral-500'}`} />
                       <span className={`text-xs truncate flex-1 ${activeTable === table ? 'text-blue-600 dark:text-blue-400' : 'text-neutral-500 dark:text-neutral-400'}`}>

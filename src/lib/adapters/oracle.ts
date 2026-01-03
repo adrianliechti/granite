@@ -54,7 +54,7 @@ export const oracleAdapter: DatabaseAdapter = {
     return `SELECT * FROM ${table} FETCH FIRST ${limit} ROWS ONLY`;
   },
 
-  createDatabaseQuery(_name: string) {
+  createDatabaseQuery() {
     // Oracle database creation requires DBA privileges and is complex
     // Users should create schemas instead
     return null;
@@ -103,7 +103,7 @@ export const oracleAdapter: DatabaseAdapter = {
     `;
   },
 
-  modifyDsnForDatabase(dsn: string, _database: string) {
+  modifyDsnForDatabase(dsn: string) {
     // Oracle DSN typically includes the service name, no modification needed
     // Format: oracle://user:pass@host:port/service_name
     return dsn;

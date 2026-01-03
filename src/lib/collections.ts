@@ -1,7 +1,7 @@
-import { createCollection, localStorageCollectionOptions } from '@tanstack/react-db';
+import { createCollection } from '@tanstack/react-db';
 import { queryCollectionOptions } from '@tanstack/query-db-collection';
 import { QueryClient } from '@tanstack/react-query';
-import type { Connection, SavedQuery, AppPreferences } from '../types';
+import type { Connection, SavedQuery } from '../types';
 
 // ============================================================================
 // QueryClient for server-backed collections
@@ -147,28 +147,6 @@ export const savedQueriesCollection = createCollection(
     },
   })
 );
-
-// ============================================================================
-// App preferences collection - persisted to localStorage (local only)
-// ============================================================================
-
-export const preferencesCollection = createCollection(
-  localStorageCollectionOptions<AppPreferences>({
-    id: 'preferences',
-    storageKey: 'granite-preferences',
-    getKey: (item) => item.id,
-  })
-);
-
-// Helper to get or create default preferences
-export function getDefaultPreferences(): AppPreferences {
-  return {
-    id: 'app-prefs',
-    theme: 'dark',
-    activeConnectionId: null,
-    sidebarWidth: 280,
-  };
-}
 
 // ============================================================================
 // Helper functions

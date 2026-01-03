@@ -1,12 +1,11 @@
 import { useQuery } from '@tanstack/react-query';
+import { useParams } from '@tanstack/react-router';
 import { Folder, ChevronRight, ChevronDown, Box, Plus } from 'lucide-react';
 import { listContainers, listObjects, getDisplayName } from '../lib/adapters/storage';
 import type { StorageConnection } from '../types';
 
 interface ObjectStorageBrowserProps {
   connection: StorageConnection;
-  activeContainer: string | null;
-  activePath: string;
   expanded: Set<string>;
   onToggle: (key: string) => void;
   onSelectContainer: (container: string) => void;
@@ -16,14 +15,17 @@ interface ObjectStorageBrowserProps {
 
 export function ObjectStorageBrowser({
   connection,
-  activeContainer,
-  activePath,
   expanded,
   onToggle,
   onSelectContainer,
   onSelectPath,
   onCreateContainer,
 }: ObjectStorageBrowserProps) {
+  // Get active container/path from URL
+  const params = useParams({ strict: false });
+  const isActiveConnection = params.connectionId === connection.id;
+  const activeContainer = params.container ?? null;
+  const activePath = params['_splat'] || '';
   // Fetch containers
   const { data: containers, isLoading: containersLoading } = useQuery({
     queryKey: ['storage-containers', connection.id],
@@ -32,26 +34,23 @@ export function ObjectStorageBrowser({
   });
 
   // Fetch objects for expanded folders
-  const activeContainerExpanded = activeContainer ? expanded.has(`container:${activeContainer}`) : false;
+  const activeContainerExpanded = activeContainer ? expanded.has(`container:${connection.id}:${activeContainer}`) : false;
   const { data: rootObjects } = useQuery({
     queryKey: ['storage-objects', connection.id, activeContainer, ''],
     queryFn: () => listObjects(connection, activeContainer!, { prefix: '', delimiter: '/' }),
     enabled: !!connection && !!activeContainer && activeContainerExpanded,
   });
 
-  const containerLabel = 'Containers';
-  const containerSingular = 'Container';
-
   return (
     <div className="space-y-0.5">
       {containersLoading ? (
         <div className="px-3 py-1.5 text-xs text-neutral-400 dark:text-neutral-600">
-          Loading {containerLabel.toLowerCase()}...
+          Loading containers...
         </div>
       ) : containers && containers.length > 0 ? (
         containers.map((container) => {
-          const isContainerActive = activeContainer === container.name;
-          const isContainerExpanded = expanded.has(`container:${container.name}`);
+          const isContainerActive = isActiveConnection && activeContainer === container.name;
+          const isContainerExpanded = expanded.has(`container:${connection.id}:${container.name}`);
 
           return (
             <div key={container.name}>
@@ -63,7 +62,7 @@ export function ObjectStorageBrowser({
                     : 'hover:bg-neutral-100 dark:hover:bg-white/5'
                 }`}
                 onClick={() => {
-                  onToggle(`container:${container.name}`);
+                  onToggle(`container:${connection.id}:${container.name}`);
                   onSelectContainer(container.name);
                 }}
               >
@@ -93,7 +92,6 @@ export function ObjectStorageBrowser({
                     expanded={expanded}
                     onToggle={onToggle}
                     onSelectPath={onSelectPath}
-                    depth={0}
                   />
                 </div>
               )}
@@ -102,7 +100,7 @@ export function ObjectStorageBrowser({
         })
       ) : (
         <div className="px-3 py-1.5 text-xs text-neutral-400 dark:text-neutral-600">
-          No {containerLabel.toLowerCase()} found
+          No containers found
         </div>
       )}
 
@@ -116,7 +114,7 @@ export function ObjectStorageBrowser({
       >
         <Plus className="w-3 h-3 text-neutral-400 dark:text-neutral-500" />
         <span className="text-xs text-neutral-400 dark:text-neutral-500">
-          New {containerSingular.toLowerCase()}
+          New container
         </span>
       </button>
     </div>
@@ -132,7 +130,6 @@ interface FolderTreeProps {
   expanded: Set<string>;
   onToggle: (key: string) => void;
   onSelectPath: (container: string, path: string) => void;
-  depth: number;
 }
 
 function FolderTree({
@@ -143,7 +140,6 @@ function FolderTree({
   expanded,
   onToggle,
   onSelectPath,
-  depth,
 }: FolderTreeProps) {
   if (prefixes.length === 0) {
     return null;
@@ -161,7 +157,6 @@ function FolderTree({
           expanded={expanded}
           onToggle={onToggle}
           onSelectPath={onSelectPath}
-          depth={depth}
         />
       ))}
     </div>
@@ -176,7 +171,6 @@ interface FolderItemProps {
   expanded: Set<string>;
   onToggle: (key: string) => void;
   onSelectPath: (container: string, path: string) => void;
-  depth: number;
 }
 
 function FolderItem({
@@ -187,9 +181,8 @@ function FolderItem({
   expanded,
   onToggle,
   onSelectPath,
-  depth,
 }: FolderItemProps) {
-  const folderKey = `folder:${container}:${prefix}`;
+  const folderKey = `folder:${connection.id}:${container}:${prefix}`;
   const isExpanded = expanded.has(folderKey);
   // Normalize both paths for comparison (remove leading slashes)
   const normalizedPrefix = prefix.replace(/^\/+/, '');
@@ -244,7 +237,6 @@ function FolderItem({
             expanded={expanded}
             onToggle={onToggle}
             onSelectPath={onSelectPath}
-            depth={depth + 1}
           />
         </div>
       )}

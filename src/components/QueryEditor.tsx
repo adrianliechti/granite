@@ -84,7 +84,7 @@ export function QueryEditor({ connection, selectedTable, onExecute, isLoading, s
       // Using a microtask to avoid the warning about setState in effects
       queueMicrotask(() => setSql(selectAllQuery(selectedTable, connection.driver)));
     }
-  }, [selectedTable, connection]);
+  }, [selectedTable, connection, setSql]);
 
   // Register autocomplete provider when Monaco is ready or schema changes
   const handleEditorMount = (_editor: editor.IStandaloneCodeEditor, monaco: Monaco) => {
