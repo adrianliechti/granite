@@ -29,7 +29,7 @@ export function getAdapter(driver: string): DatabaseAdapter {
 
 // Execute a query via the backend API
 export async function executeQuery(driver: string, dsn: string, query: string): Promise<QueryResult> {
-  const response = await fetch('/api/sql/query', {
+  const response = await fetch('/sql/query', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ driver, dsn, query, params: [] }),

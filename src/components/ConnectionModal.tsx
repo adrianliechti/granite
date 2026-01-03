@@ -70,7 +70,7 @@ export function ConnectionModal({ connection, onSave, onClose }: ConnectionModal
     setTestError(null);
 
     try {
-      const response = await fetch('/api/sql/query', {
+      const response = await fetch('/sql/query', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ driver, dsn, query: 'SELECT 1', params: [] }),

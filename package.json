@@ -16,6 +16,7 @@
     "@tanstack/ai-client": "^0.2.0",
     "@tanstack/ai-openai": "^0.2.0",
     "@tanstack/ai-react": "^0.2.0",
+    "@tanstack/query-db-collection": "^1.0.12",
     "@tanstack/react-db": "^0.1.60",
     "@tanstack/react-query": "^5.90.16",
     "@tanstack/react-router": "^1.144.0",

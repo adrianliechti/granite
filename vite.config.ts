@@ -23,10 +23,13 @@ export default defineConfig({
   ],
   server: {
     proxy: {
-      '/api': {
+      '/data': {
+        target: 'http://localhost:7777',
+        changeOrigin: true,
+      },
+      '/sql': {
         target: 'http://127.0.0.1:7777',
         changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/api/, ''),
       },
       '/openai': {
         target: 'http://localhost:8080',
