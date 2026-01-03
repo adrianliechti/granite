@@ -4,6 +4,7 @@ import { Play } from 'lucide-react';
 import type { Connection } from '../types';
 import type { ColumnInfo } from '../lib/adapters';
 import type { editor } from 'monaco-editor';
+import { selectAllQuery } from '../lib/adapters';
 
 // Schema info for autocomplete
 export interface SchemaInfo {
@@ -43,11 +44,11 @@ export function QueryEditor({ connection, selectedTable, onExecute, isLoading, s
 
   // Update SQL when table selection changes
   useEffect(() => {
-    if (selectedTable) {
+    if (selectedTable && connection) {
       // Using a microtask to avoid the warning about setState in effects
-      queueMicrotask(() => setSql(`SELECT * FROM ${selectedTable} LIMIT 100`));
+      queueMicrotask(() => setSql(selectAllQuery(selectedTable, connection.driver)));
     }
-  }, [selectedTable]);
+  }, [selectedTable, connection]);
 
   // Register autocomplete provider when Monaco is ready or schema changes
   const handleEditorMount = (_editor: editor.IStandaloneCodeEditor, monaco: Monaco) => {

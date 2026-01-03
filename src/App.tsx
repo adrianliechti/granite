@@ -5,10 +5,9 @@ import { router } from './router';
 import { Sidebar } from './components/Sidebar';
 import { QueryEditor, type SchemaInfo } from './components/QueryEditor';
 import { ResultsTable } from './components/ResultsTable';
-import { executeQuery } from './lib/api';
 import { useLiveQuery } from '@tanstack/react-db';
 import { connectionsCollection } from './lib/collections';
-import { listTables, listColumns, type ColumnInfo } from './lib/adapters';
+import { listTables, listColumns, selectAllQuery, executeScript, type ColumnInfo } from './lib/adapters';
 import type { SQLResponse } from './types';
 
 const queryClient = new QueryClient();
@@ -80,11 +79,14 @@ function AppContent() {
     mutationFn: async (sql: string) => {
       if (!activeConnection) throw new Error('No connection selected');
       const start = performance.now();
-      const response = await executeQuery({
-        driver: activeConnection.driver,
-        dsn: activeConnection.dsn,
-        query: sql,
-      });
+      
+      // executeScript handles multi-statement for Oracle, single query for others
+      const response = await executeScript(
+        activeConnection.driver,
+        activeConnection.dsn,
+        sql
+      );
+      
       const duration = performance.now() - start;
       return { response, duration };
     },
@@ -121,7 +123,7 @@ function AppContent() {
     navigate({ to: `/${connectionId}/${database}/${tbl}` });
     // Auto-execute query when table is selected
     if (activeConnection) {
-      mutation.mutate(`SELECT * FROM ${tbl} LIMIT 100`);
+      mutation.mutate(selectAllQuery(tbl, activeConnection.driver));
     }
   }, [navigate, connectionId, database, activeConnection, mutation]);
 
@@ -153,11 +155,11 @@ function AppContent() {
     const sql = `UPDATE ${table} SET ${columnId} = ${formatValue(newValue)} WHERE ${pkColumn} = ${formatValue(pkValue)}`;
     
     try {
-      await executeQuery({
-        driver: activeConnection.driver,
-        dsn: activeConnection.dsn,
-        query: sql,
-      });
+      await executeScript(
+        activeConnection.driver,
+        activeConnection.dsn,
+        sql
+      );
     } catch (error) {
       console.error('Update failed:', error);
     }
@@ -187,13 +189,13 @@ function AppContent() {
     const sql = `DELETE FROM ${table} WHERE ${pkColumn} = ${formatValue(pkValue)}`;
     
     try {
-      await executeQuery({
-        driver: activeConnection.driver,
-        dsn: activeConnection.dsn,
-        query: sql,
-      });
+      await executeScript(
+        activeConnection.driver,
+        activeConnection.dsn,
+        sql
+      );
       // Refresh the table data
-      mutation.mutate(`SELECT * FROM ${table} LIMIT 100`);
+      mutation.mutate(selectAllQuery(table, activeConnection.driver));
     } catch (error) {
       console.error('Delete failed:', error);
     }

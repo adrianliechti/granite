@@ -2,7 +2,7 @@
 export interface Connection {
   id: string;
   name: string;
-  driver: 'postgres' | 'mysql' | 'sqlite';
+  driver: 'postgres' | 'mysql' | 'sqlite' | 'sqlserver' | 'oracle';
   dsn: string;
   createdAt: string;
 }

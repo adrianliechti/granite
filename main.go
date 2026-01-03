@@ -8,6 +8,9 @@ import (
 
 	_ "github.com/go-sql-driver/mysql"
 	_ "github.com/lib/pq"
+	_ "github.com/microsoft/go-mssqldb"
+	_ "github.com/microsoft/go-mssqldb/integratedauth/krb5"
+	_ "github.com/sijms/go-ora/v2"
 	_ "modernc.org/sqlite"
 )
 
@@ -24,6 +27,16 @@ type SQLResponse struct {
 	Rows         []map[string]any `json:"rows,omitempty"`
 	RowsAffected int64            `json:"rows_affected,omitempty"`
 	Error        string           `json:"error,omitempty"`
+}
+
+type ErrorResponse struct {
+	Message string `json:"message"`
+}
+
+func writeError(w http.ResponseWriter, status int, message string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	json.NewEncoder(w).Encode(ErrorResponse{Message: message})
 }
 
 func isQuery(query string) bool {
@@ -75,48 +88,37 @@ func main() {
 
 	mux.HandleFunc("POST /sql/query", func(w http.ResponseWriter, r *http.Request) {
 		var req SQLRequest
-		var resp SQLResponse
-
-		w.Header().Set("Content-Type", "application/json")
 
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			resp.Error = "Invalid request payload: " + err.Error()
-			w.WriteHeader(http.StatusBadRequest)
-			json.NewEncoder(w).Encode(resp)
+			writeError(w, http.StatusBadRequest, "Invalid request payload: "+err.Error())
 			return
 		}
 
 		db, err := sql.Open(req.Driver, req.DSN)
 		if err != nil {
-			resp.Error = "Failed to open database: " + err.Error()
-			w.WriteHeader(http.StatusInternalServerError)
-			json.NewEncoder(w).Encode(resp)
+			writeError(w, http.StatusBadRequest, "Failed to open database: "+err.Error())
 			return
 		}
 		defer db.Close()
 
 		if err := db.Ping(); err != nil {
-			resp.Error = "Failed to connect to database: " + err.Error()
-			w.WriteHeader(http.StatusInternalServerError)
-			json.NewEncoder(w).Encode(resp)
+			writeError(w, http.StatusBadRequest, "Failed to connect to database: "+err.Error())
 			return
 		}
+
+		var resp SQLResponse
 
 		if isQuery(req.Query) {
 			rows, err := db.Query(req.Query, req.Params...)
 			if err != nil {
-				resp.Error = err.Error()
-				w.WriteHeader(http.StatusInternalServerError)
-				json.NewEncoder(w).Encode(resp)
+				writeError(w, http.StatusBadRequest, err.Error())
 				return
 			}
 			defer rows.Close()
 
 			columns, data, err := rowsToJSON(rows)
 			if err != nil {
-				resp.Error = err.Error()
-				w.WriteHeader(http.StatusInternalServerError)
-				json.NewEncoder(w).Encode(resp)
+				writeError(w, http.StatusBadRequest, err.Error())
 				return
 			}
 
@@ -125,15 +127,14 @@ func main() {
 		} else {
 			result, err := db.Exec(req.Query, req.Params...)
 			if err != nil {
-				resp.Error = err.Error()
-				w.WriteHeader(http.StatusInternalServerError)
-				json.NewEncoder(w).Encode(resp)
+				writeError(w, http.StatusBadRequest, err.Error())
 				return
 			}
 
 			resp.RowsAffected, _ = result.RowsAffected()
 		}
 
+		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(resp)
 	})
 
