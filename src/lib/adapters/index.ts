@@ -27,7 +27,7 @@ export function getAdapter(driver: string): DatabaseAdapter {
   return adapter;
 }
 
-// Execute a query via the backend API
+// Execute a query via the backend API (for SELECT-like queries that return rows)
 export async function executeQuery(driver: string, dsn: string, query: string): Promise<QueryResult> {
   const response = await fetch('/sql/query', {
     method: 'POST',
@@ -41,6 +41,40 @@ export async function executeQuery(driver: string, dsn: string, query: string): 
   }
   
   return response.json();
+}
+
+// Execute a statement via the backend API (for INSERT/UPDATE/DELETE that modify data)
+export async function executeStatement(driver: string, dsn: string, query: string): Promise<QueryResult> {
+  const response = await fetch('/sql/execute', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ driver, dsn, query, params: [] }),
+  });
+  
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data.message || `HTTP error: ${response.status}`);
+  }
+  
+  return response.json();
+}
+
+// Determine if a SQL string is a query (returns rows) or a statement (modifies data)
+function isSelectQuery(query: string): boolean {
+  const q = query.trim().toUpperCase();
+  const queryPrefixes = ['SELECT', 'WITH', 'SHOW', 'DESCRIBE', 'EXPLAIN', 'PRAGMA'];
+  for (const prefix of queryPrefixes) {
+    if (q.startsWith(prefix)) return true;
+  }
+  return q.includes('RETURNING');
+}
+
+// Execute SQL - automatically chooses between query and execute endpoints
+export async function executeSQL(driver: string, dsn: string, query: string): Promise<QueryResult> {
+  if (isSelectQuery(query)) {
+    return executeQuery(driver, dsn, query);
+  }
+  return executeStatement(driver, dsn, query);
 }
 
 // High-level API functions that use the adapters
@@ -88,7 +122,7 @@ export async function createDatabase(driver: string, dsn: string, name: string):
     throw new Error(`Creating databases is not supported for ${driver}`);
   }
   
-  await executeQuery(driver, dsn, query);
+  await executeStatement(driver, dsn, query);
 }
 
 // Check if the driver supports database creation

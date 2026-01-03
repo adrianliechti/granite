@@ -40,7 +40,11 @@ const executeQuerySchema = z.object({
 });
 
 const runQuerySchema = z.object({
-  query: z.string().describe('The SQL query to run silently'),
+  query: z.string().describe('The SQL SELECT query to run silently'),
+});
+
+const runStatementSchema = z.object({
+  query: z.string().describe('The SQL statement (INSERT/UPDATE/DELETE) to execute silently'),
 });
 
 // Tool definitions
@@ -64,14 +68,21 @@ const executeQueryDef = toolDefinition({
 
 const runQueryDef = toolDefinition({
   name: 'run_query',
-  description: 'Run a SQL query silently WITHOUT changing the UI or query editor. Use this for exploratory queries, checking data, or gathering information without disrupting what the user is currently working on. Results are returned but not shown in the UI.',
+  description: 'Run a SELECT query silently WITHOUT changing the UI or query editor. Use this for exploratory queries, checking data, or gathering information without disrupting what the user is currently working on. Results are returned but not shown in the UI. Only use for SELECT, WITH, SHOW, DESCRIBE, EXPLAIN, or PRAGMA queries.',
   inputSchema: runQuerySchema,
+});
+
+const runStatementDef = toolDefinition({
+  name: 'run_statement',
+  description: 'Execute an INSERT, UPDATE, or DELETE statement silently WITHOUT changing the UI. Use this for modifying data without disrupting what the user is currently working on. Returns rows_affected count.',
+  inputSchema: runStatementSchema,
 });
 
 // Type aliases for tool inputs
 type SetQueryInput = z.infer<typeof setQuerySchema>;
 type ExecuteQueryInput = z.infer<typeof executeQuerySchema>;
 type RunQueryInput = z.infer<typeof runQuerySchema>;
+type RunStatementInput = z.infer<typeof runStatementSchema>;
 
 // Create client tool implementations
 export function createQueryTools(environment: QueryChatEnvironment) {
@@ -103,10 +114,20 @@ export function createQueryTools(environment: QueryChatEnvironment) {
   const runQuery = runQueryDef.client(async (args: unknown) => {
     const input = args as RunQueryInput;
     try {
-      const response = await setters.executeQuerySilent(input.query);
+      const response = await setters.runQuerySilent(input.query);
       return formatQueryResult(response);
     } catch (error) {
       return { error: error instanceof Error ? error.message : 'Query execution failed' };
+    }
+  });
+
+  const runStatement = runStatementDef.client(async (args: unknown) => {
+    const input = args as RunStatementInput;
+    try {
+      const response = await setters.runStatementSilent(input.query);
+      return formatQueryResult(response);
+    } catch (error) {
+      return { error: error instanceof Error ? error.message : 'Statement execution failed' };
     }
   });
 
@@ -114,7 +135,8 @@ export function createQueryTools(environment: QueryChatEnvironment) {
     getQueryResult,
     setQuery,
     executeQuery,
-    runQuery
+    runQuery,
+    runStatement
   );
 }
 
@@ -168,13 +190,15 @@ ${querySection}${schemaSection}
 - \`get_query_result\`: Get results of the last executed query
 - \`set_query\`: Put a query in the editor (user sees it immediately)
 - \`execute_query\`: Run a query and show results in UI
-- \`run_query\`: Run a query silently without changing UI (for exploration)
+- \`run_query\`: Run a SELECT query silently without changing UI (for exploration)
+- \`run_statement\`: Execute INSERT/UPDATE/DELETE silently without changing UI
 
 ## Guidelines
 
 - **Writing queries**: Use \`set_query\` to show it in the editor for review
 - **Running queries**: Use \`execute_query\` - results return directly
-- **Exploring data**: Use \`run_query\` to check data without disrupting the UI
+- **Exploring data**: Use \`run_query\` for SELECT queries without disrupting the UI
+- **Modifying data**: Use \`run_statement\` for INSERT/UPDATE/DELETE operations silently
 - **Query format**: One query at a time. For Oracle, omit trailing semicolon
 - **Response format**: Use Markdown. Be concise.`;
 }

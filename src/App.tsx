@@ -8,7 +8,7 @@ import { ResultsTable } from './components/ResultsTable';
 import { ChatPanel } from './components/ChatPanel';
 import { useLiveQuery } from '@tanstack/react-db';
 import { connectionsCollection } from './lib/collections';
-import { listTables, listColumns, selectAllQuery, executeQuery, getSupportedTableViews, getTableViewQuery, type ColumnInfo, type TableView } from './lib/adapters';
+import { listTables, listColumns, selectAllQuery, executeSQL, executeQuery, executeStatement, getSupportedTableViews, getTableViewQuery, type ColumnInfo, type TableView } from './lib/adapters';
 import type { SQLResponse } from './types';
 import { getConfig } from './config';
 
@@ -103,7 +103,7 @@ function AppContent() {
       if (!activeConnection) throw new Error('No connection selected');
       const start = performance.now();
       
-      const response = await executeQuery(
+      const response = await executeSQL(
         activeConnection.driver,
         activeConnection.dsn,
         sql
@@ -129,16 +129,6 @@ function AppContent() {
     const result = await mutation.mutateAsync(sql);
     return result.response;
   }, [mutation]);
-
-  // Execute query silently without updating UI
-  const handleExecuteSilent = useCallback(async (sql: string): Promise<SQLResponse> => {
-    if (!activeConnection) throw new Error('No connection selected');
-    return executeQuery(
-      activeConnection.driver,
-      activeConnection.dsn,
-      sql
-    );
-  }, [activeConnection]);
 
   const handleSelectConnection = useCallback((connId: string | null) => {
     if (!connId) {
@@ -202,7 +192,7 @@ function AppContent() {
     const sql = `UPDATE ${table} SET ${columnId} = ${formatValue(newValue)} WHERE ${pkColumn} = ${formatValue(pkValue)}`;
     
     try {
-      await executeQuery(
+      await executeStatement(
         activeConnection.driver,
         activeConnection.dsn,
         sql
@@ -236,7 +226,7 @@ function AppContent() {
     const sql = `DELETE FROM ${table} WHERE ${pkColumn} = ${formatValue(pkValue)}`;
     
     try {
-      await executeQuery(
+      await executeStatement(
         activeConnection.driver,
         activeConnection.dsn,
         sql
@@ -252,8 +242,15 @@ function AppContent() {
   const querySetters = useMemo(() => ({
     setQuery: setSql,
     executeQuery: handleExecute,
-    executeQuerySilent: handleExecuteSilent,
-  }), [handleExecute, handleExecuteSilent]);
+    runQuerySilent: async (sql: string) => {
+      if (!activeConnection) throw new Error('No connection selected');
+      return executeQuery(activeConnection.driver, activeConnection.dsn, sql);
+    },
+    runStatementSilent: async (sql: string) => {
+      if (!activeConnection) throw new Error('No connection selected');
+      return executeStatement(activeConnection.driver, activeConnection.dsn, sql);
+    },
+  }), [handleExecute, activeConnection]);
 
   return (
     <div className="h-screen flex bg-neutral-50 dark:bg-[#0d0d0d] py-2 pr-2 pl-1 gap-2">

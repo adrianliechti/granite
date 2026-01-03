@@ -8,8 +8,10 @@ export interface QuerySetters {
   setQuery: (query: string) => void;
   /** Execute query and update the UI with results */
   executeQuery: (query: string) => Promise<SQLResponse>;
-  /** Execute query silently without updating the UI */
-  executeQuerySilent: (query: string) => Promise<SQLResponse>;
+  /** Execute query silently without updating the UI (for SELECT-like queries) */
+  runQuerySilent: (query: string) => Promise<SQLResponse>;
+  /** Execute statement silently without updating the UI (for INSERT/UPDATE/DELETE) */
+  runStatementSilent: (query: string) => Promise<SQLResponse>;
 }
 
 // Environment context passed to chat tools

@@ -35,6 +35,7 @@ func New(cfg *config.Config) (*Server, error) {
 	}
 
 	mux.HandleFunc("POST /sql/query", s.handleQuery)
+	mux.HandleFunc("POST /sql/execute", s.handleExecute)
 
 	mux.HandleFunc("GET /data/{store}", s.handleDataList)
 	mux.HandleFunc("GET /data/{store}/{id}", s.handleDataGet)
