@@ -13,6 +13,21 @@ function truncateResults(rows: Record<string, unknown>[] | undefined): Record<st
   return rows.slice(0, MAX_RESULT_ROWS);
 }
 
+// Format query result for AI response
+function formatQueryResult(response: { columns?: string[]; rows?: Record<string, unknown>[]; rows_affected?: number; error?: string }) {
+  if (response.error) {
+    return { error: response.error };
+  }
+
+  return {
+    columns: response.columns,
+    rowCount: response.rows?.length ?? 0,
+    rows: truncateResults(response.rows),
+    rowsAffected: response.rows_affected,
+    truncated: (response.rows?.length ?? 0) > MAX_RESULT_ROWS,
+  };
+}
+
 // Zod schemas for tool inputs
 const emptySchema = z.object({});
 
@@ -24,91 +39,49 @@ const executeQuerySchema = z.object({
   query: z.string().describe('The SQL query to execute'),
 });
 
+const runQuerySchema = z.object({
+  query: z.string().describe('The SQL query to run silently'),
+});
+
 // Tool definitions
-const getContextDef = toolDefinition({
-  name: 'get_context',
-  description: 'Get the current context including connection info, selected database/table, current query, and schema information (available tables and columns)',
-  inputSchema: emptySchema,
-});
-
-const getCurrentQueryDef = toolDefinition({
-  name: 'get_current_query',
-  description: 'Get the current SQL query from the editor',
-  inputSchema: emptySchema,
-});
-
 const getQueryResultDef = toolDefinition({
   name: 'get_query_result',
-  description: 'Get the result of the last executed query, including columns, rows, and any errors',
+  description: 'Get the result of the last executed query that was shown in the UI, including columns, rows, and any errors',
   inputSchema: emptySchema,
 });
 
 const setQueryDef = toolDefinition({
   name: 'set_query',
-  description: 'Set the SQL query in the editor. This updates the query editor content but does not execute it.',
+  description: 'Set the SQL query in the editor without executing it. The user will see the query appear in their editor immediately.',
   inputSchema: setQuerySchema,
 });
 
 const executeQueryDef = toolDefinition({
   name: 'execute_query',
-  description: 'Execute a SQL query and return the results. This will run the query against the connected database.',
+  description: 'Execute a SQL query and show results in the UI. The query will be set in the editor and executed, with results displayed to the user. Returns the query results directly.',
   inputSchema: executeQuerySchema,
+});
+
+const runQueryDef = toolDefinition({
+  name: 'run_query',
+  description: 'Run a SQL query silently WITHOUT changing the UI or query editor. Use this for exploratory queries, checking data, or gathering information without disrupting what the user is currently working on. Results are returned but not shown in the UI.',
+  inputSchema: runQuerySchema,
 });
 
 // Type aliases for tool inputs
 type SetQueryInput = z.infer<typeof setQuerySchema>;
 type ExecuteQueryInput = z.infer<typeof executeQuerySchema>;
+type RunQueryInput = z.infer<typeof runQuerySchema>;
 
 // Create client tool implementations
 export function createQueryTools(environment: QueryChatEnvironment) {
-  const { connection, database, table, currentQuery, queryResult, schema, setters } = environment;
-
-  const getContext = getContextDef.client(async () => {
-    // Get columns for the currently selected table
-    const currentTableColumns = table && schema?.columns[table]
-      ? schema.columns[table].map(c => ({ name: c.name, type: c.type, nullable: c.nullable }))
-      : null;
-
-    return {
-      connection: connection ? {
-        name: connection.name,
-        driver: connection.driver,
-      } : null,
-      database,
-      table,
-      currentTableColumns,
-      schema: schema ? {
-        tables: schema.tables,
-        columns: Object.fromEntries(
-          Object.entries(schema.columns).map(([tableName, cols]) => [
-            tableName,
-            cols.map(c => ({ name: c.name, type: c.type, nullable: c.nullable }))
-          ])
-        ),
-      } : null,
-    };
-  });
-
-  const getCurrentQuery = getCurrentQueryDef.client(async () => {
-    return { query: currentQuery || '(empty)' };
-  });
+  const { queryResult, setters } = environment;
 
   const getQueryResult = getQueryResultDef.client(async () => {
     if (!queryResult) {
       return { error: 'No query has been executed yet.' };
     }
-    
-    if (queryResult.error) {
-      return { error: queryResult.error };
-    }
-
-    return {
-      columns: queryResult.columns,
-      rowCount: queryResult.rows?.length ?? 0,
-      rows: truncateResults(queryResult.rows),
-      rowsAffected: queryResult.rows_affected,
-      truncated: (queryResult.rows?.length ?? 0) > MAX_RESULT_ROWS,
-    };
+    return formatQueryResult(queryResult);
   });
 
   const setQuery = setQueryDef.client(async (args: unknown) => {
@@ -119,44 +92,91 @@ export function createQueryTools(environment: QueryChatEnvironment) {
 
   const executeQuery = executeQueryDef.client(async (args: unknown) => {
     const input = args as ExecuteQueryInput;
-    setters.executeQuery(input.query);
-    return { success: true, message: 'Query execution started. Use get_query_result to see results after execution completes.' };
+    try {
+      const response = await setters.executeQuery(input.query);
+      return formatQueryResult(response);
+    } catch (error) {
+      return { error: error instanceof Error ? error.message : 'Query execution failed' };
+    }
+  });
+
+  const runQuery = runQueryDef.client(async (args: unknown) => {
+    const input = args as RunQueryInput;
+    try {
+      const response = await setters.executeQuerySilent(input.query);
+      return formatQueryResult(response);
+    } catch (error) {
+      return { error: error instanceof Error ? error.message : 'Query execution failed' };
+    }
   });
 
   return clientTools(
-    getContext,
-    getCurrentQuery,
     getQueryResult,
     setQuery,
-    executeQuery
+    executeQuery,
+    runQuery
   );
 }
 
 // Build instructions for the SQL chat assistant
-export function buildQueryInstructions(): string {
-  return `You are an AI assistant embedded in a SQL client application (similar to DataGrip or DBeaver). You help users write, understand, and debug SQL queries.
+export function buildQueryInstructions(environment: QueryChatEnvironment): string {
+  const { connection, database, table, currentQuery, schema } = environment;
+  
+  // Build current environment section
+  const envLines: string[] = [];
+  if (connection) {
+    envLines.push(`- **Driver**: ${connection.driver}`);
+    envLines.push(`- **Database**: ${database || '(none selected)'}`);
+    envLines.push(`- **Table**: ${table || '(none selected)'}`);
+  } else {
+    envLines.push('- Not connected to a database');
+  }
+  
+  const envSection = envLines.join('\n');
+  
+  // Build current query section
+  const querySection = currentQuery?.trim() 
+    ? `\`\`\`sql\n${currentQuery}\n\`\`\`` 
+    : '(empty)';
 
-IMPORTANT: When you use tools like set_query or execute_query, the changes appear immediately in the user's query editor. You are actively editing their query—not just describing what to do.
+  // Build schema section if available
+  let schemaSection = '';
+  if (schema?.tables?.length) {
+    const tableList = schema.tables.map(t => {
+      const cols = schema.columns[t];
+      if (cols?.length) {
+        const colStr = cols.map(c => `${c.name} (${c.type})`).join(', ');
+        return `- **${t}**: ${colStr}`;
+      }
+      return `- **${t}**`;
+    }).join('\n');
+    schemaSection = `\n\n## Schema\n\n${tableList}`;
+  }
 
-Your capabilities:
-- View the current database context (connection, database, table, schema)
-- View and modify the SQL query in the editor
-- Execute queries and analyze results
-- Help write complex queries based on the available schema
+  return `You are an AI assistant embedded in a database management tool. You help users write, understand, and debug SQL queries.
 
-Guidelines:
-- When the user asks to write a query, use set_query to put it in the editor
-- When the user wants to run a query, use execute_query, then ALWAYS use get_query_result to check the actual results
-- IMPORTANT: After executing a query, you MUST call get_query_result to verify if it succeeded or failed. Do NOT assume there was an error without checking the results first
-- Always check the schema context first to understand available tables and columns
-- Provide clear explanations of what queries do
-- When debugging, always get_query_result first to see the actual error message or results
-- Suggest optimizations when appropriate
-- Use proper SQL syntax for the connected database driver (PostgreSQL, MySQL, SQLite, etc.)
-- IMPORTANT: Only one query can be executed at a time. Do NOT include multiple queries separated by semicolons in a single execution
-- IMPORTANT: For Oracle databases, do NOT include a trailing semicolon (;) at the end of queries - Oracle's driver does not support it
-- Format your responses using Markdown: use **bold**, \`code\`, code blocks with language tags, lists, and headers when appropriate
-- When showing SQL examples, use \`\`\`sql code blocks`;
+## Current Environment
+
+${envSection}
+
+## Current Query
+
+${querySection}${schemaSection}
+
+## Tools
+
+- \`get_query_result\`: Get results of the last executed query
+- \`set_query\`: Put a query in the editor (user sees it immediately)
+- \`execute_query\`: Run a query and show results in UI
+- \`run_query\`: Run a query silently without changing UI (for exploration)
+
+## Guidelines
+
+- **Writing queries**: Use \`set_query\` to show it in the editor for review
+- **Running queries**: Use \`execute_query\` - results return directly
+- **Exploring data**: Use \`run_query\` to check data without disrupting the UI
+- **Query format**: One query at a time. For Oracle, omit trailing semicolon
+- **Response format**: Use Markdown. Be concise.`;
 }
 
 // Adapter metadata

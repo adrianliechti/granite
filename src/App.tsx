@@ -123,9 +123,22 @@ function AppContent() {
     },
   });
 
-  const handleExecute = useCallback((sql: string) => {
-    mutation.mutate(sql);
+  // Execute query and update UI, returns the response
+  const handleExecute = useCallback(async (sql: string): Promise<SQLResponse> => {
+    setSql(sql);
+    const result = await mutation.mutateAsync(sql);
+    return result.response;
   }, [mutation]);
+
+  // Execute query silently without updating UI
+  const handleExecuteSilent = useCallback(async (sql: string): Promise<SQLResponse> => {
+    if (!activeConnection) throw new Error('No connection selected');
+    return executeQuery(
+      activeConnection.driver,
+      activeConnection.dsn,
+      sql
+    );
+  }, [activeConnection]);
 
   const handleSelectConnection = useCallback((connId: string | null) => {
     if (!connId) {
@@ -239,7 +252,8 @@ function AppContent() {
   const querySetters = useMemo(() => ({
     setQuery: setSql,
     executeQuery: handleExecute,
-  }), [handleExecute]);
+    executeQuerySilent: handleExecuteSilent,
+  }), [handleExecute, handleExecuteSilent]);
 
   return (
     <div className="h-screen flex bg-neutral-50 dark:bg-[#0d0d0d] py-2 pr-2 pl-1 gap-2">

@@ -6,7 +6,10 @@ import type { SchemaInfo } from '../components/QueryEditor';
 // Setters for modifying SQL query state
 export interface QuerySetters {
   setQuery: (query: string) => void;
-  executeQuery: (query: string) => void;
+  /** Execute query and update the UI with results */
+  executeQuery: (query: string) => Promise<SQLResponse>;
+  /** Execute query silently without updating the UI */
+  executeQuerySilent: (query: string) => Promise<SQLResponse>;
 }
 
 // Environment context passed to chat tools

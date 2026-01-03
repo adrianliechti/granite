@@ -53,11 +53,13 @@ export function ChatPanel({
   // Create tools
   const tools = useMemo(() => createQueryTools(environment), [environment]);
 
+  // Build instructions with current environment
+  const instructions = useMemo(() => buildQueryInstructions(environment), [environment]);
+
   // Create connection adapter that wraps the chat() function
   const chatConnection = useMemo(() => {
     const model = getConfiguredModel();
     const adapter = createChatAdapter(model);
-    const instructions = buildQueryInstructions();
 
     return stream((messages) => 
       chat({
@@ -69,7 +71,7 @@ export function ChatPanel({
         agentLoopStrategy: maxIterations(10),
       })
     );
-  }, [tools]);
+  }, [tools, instructions]);
 
   const { messages, sendMessage, isLoading, stop, clear } = useChat({
     connection: chatConnection,
@@ -170,28 +172,32 @@ export function ChatPanel({
           const content = getMessageContent(message);
           
           return (
-            <div
-              key={message.id}
-              className={`text-sm ${
-                message.role === 'user'
-                  ? 'bg-neutral-100 dark:bg-neutral-800 rounded-lg px-3 py-2'
-                  : ''
-              }`}
-            >
-              <div className={message.role === 'user' ? 'text-neutral-900 dark:text-neutral-100' : 'text-neutral-700 dark:text-neutral-300'}>
-                {message.role === 'assistant' ? (
-                  content ? (
-                    <Markdown>{content}</Markdown>
-                  ) : isStreaming(message, index) ? (
-                    <span className="flex items-center gap-2 text-neutral-400">
-                      <Loader2 size={14} className="animate-spin" />
-                      Thinking...
-                    </span>
-                  ) : null
-                ) : (
-                  <span className="whitespace-pre-wrap">{content}</span>
-                )}
-              </div>
+            <div key={message.id} className="space-y-3">
+              {/* Message content */}
+              {(content || isStreaming(message, index)) && (
+                <div
+                  className={`text-sm ${
+                    message.role === 'user'
+                      ? 'bg-neutral-100 dark:bg-neutral-800 rounded-lg px-3 py-2'
+                      : ''
+                  }`}
+                >
+                  <div className={message.role === 'user' ? 'text-neutral-900 dark:text-neutral-100' : 'text-neutral-700 dark:text-neutral-300'}>
+                    {message.role === 'assistant' ? (
+                      content ? (
+                        <Markdown>{content}</Markdown>
+                      ) : isStreaming(message, index) ? (
+                        <span className="flex items-center gap-2 text-neutral-400">
+                          <Loader2 size={14} className="animate-spin" />
+                          Thinking...
+                        </span>
+                      ) : null
+                    ) : (
+                      <span className="whitespace-pre-wrap">{content}</span>
+                    )}
+                  </div>
+                </div>
+              )}
             </div>
           );
         })}
