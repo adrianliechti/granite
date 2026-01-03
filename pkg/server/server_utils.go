@@ -4,18 +4,18 @@ import (
 	"database/sql"
 )
 
-func rowsToJSON(rows *sql.Rows) ([]string, []map[string]interface{}, error) {
+func rowsToJSON(rows *sql.Rows) ([]string, []map[string]any, error) {
 	columns, err := rows.Columns()
 
 	if err != nil {
 		return nil, nil, err
 	}
 
-	var result []map[string]interface{}
+	var result []map[string]any
 
 	for rows.Next() {
-		values := make([]interface{}, len(columns))
-		pointers := make([]interface{}, len(columns))
+		values := make([]any, len(columns))
+		pointers := make([]any, len(columns))
 
 		for i := range values {
 			pointers[i] = &values[i]
@@ -25,7 +25,7 @@ func rowsToJSON(rows *sql.Rows) ([]string, []map[string]interface{}, error) {
 			return nil, nil, err
 		}
 
-		row := make(map[string]interface{})
+		row := make(map[string]any)
 
 		for i, col := range columns {
 			val := values[i]

@@ -31,6 +31,10 @@ export default defineConfig({
         target: 'http://127.0.0.1:7777',
         changeOrigin: true,
       },
+      '/storage': {
+        target: 'http://127.0.0.1:7777',
+        changeOrigin: true,
+      },
       '/openai': {
         target: 'http://localhost:8080',
         changeOrigin: true,

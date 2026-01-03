@@ -12,6 +12,7 @@ const connectionRoute = createRoute({
   path: '$connectionId',
 });
 
+// Database routes
 const databaseRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '$connectionId/$database',
@@ -22,7 +23,19 @@ const tableRoute = createRoute({
   path: '$connectionId/$database/$table',
 });
 
-const routeTree = rootRoute.addChildren([indexRoute, connectionRoute, databaseRoute, tableRoute]);
+// Storage route - splat ($) captures the optional path after container
+const storageRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '$connectionId/container/$container/$',
+});
+
+const routeTree = rootRoute.addChildren([
+  indexRoute,
+  connectionRoute,
+  databaseRoute,
+  tableRoute,
+  storageRoute,
+]);
 
 export const router = createRouter({ routeTree });
 

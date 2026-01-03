@@ -34,13 +34,25 @@ func New(cfg *config.Config) (*Server, error) {
 		Handler: mux,
 	}
 
-	mux.HandleFunc("POST /sql/query", s.handleQuery)
-	mux.HandleFunc("POST /sql/execute", s.handleExecute)
-
+	// Data endpoints
 	mux.HandleFunc("GET /data/{store}", s.handleDataList)
 	mux.HandleFunc("GET /data/{store}/{id}", s.handleDataGet)
 	mux.HandleFunc("PUT /data/{store}/{id}", s.handleDataPut)
 	mux.HandleFunc("DELETE /data/{store}/{id}", s.handleDataDelete)
+
+	// SQL endpoints
+	mux.HandleFunc("POST /sql/query", s.handleQuery)
+	mux.HandleFunc("POST /sql/execute", s.handleExecute)
+
+	// Storage endpoints
+	mux.HandleFunc("POST /storage/containers", s.handleStorageContainers)
+	mux.HandleFunc("POST /storage/containers/create", s.handleStorageCreateContainer)
+
+	mux.HandleFunc("POST /storage/objects", s.handleStorageObjects)
+	mux.HandleFunc("POST /storage/object/details", s.handleStorageObjectDetails)
+	mux.HandleFunc("POST /storage/object/presign", s.handleStoragePresignedURL)
+	mux.HandleFunc("POST /storage/object/delete", s.handleStorageDeleteObject)
+	mux.HandleFunc("POST /storage/upload", s.handleStorageUploadObject)
 
 	if cfg.OpenAI != nil {
 		target, err := url.Parse(cfg.OpenAI.URL)

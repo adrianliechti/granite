@@ -9,6 +9,9 @@ import { oracleAdapter } from './oracle';
 export type { DatabaseAdapter, Driver, ColumnInfo, TableView } from './types';
 export type { QueryResult } from './types';
 
+// Re-export storage utilities
+export * from './storage';
+
 // Adapter registry
 const adapters: Record<Driver, DatabaseAdapter> = {
   postgres: postgresAdapter,
