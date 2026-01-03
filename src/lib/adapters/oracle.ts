@@ -1,7 +1,11 @@
-import type { DatabaseAdapter, ColumnInfo } from './types';
+import type { DatabaseAdapter, ColumnInfo, TableView } from './types';
 
 export const oracleAdapter: DatabaseAdapter = {
   driver: 'oracle',
+
+  supportedTableViews(): TableView[] {
+    return ['records', 'columns', 'constraints', 'foreignKeys', 'indexes'];
+  },
 
   listDatabasesQuery() {
     // Oracle uses pluggable databases (PDBs) or we can list schemas
@@ -54,6 +58,49 @@ export const oracleAdapter: DatabaseAdapter = {
     // Oracle database creation requires DBA privileges and is complex
     // Users should create schemas instead
     return null;
+  },
+
+  listConstraintsQuery(table: string) {
+    return `
+      SELECT 
+        con.constraint_name,
+        con.constraint_type,
+        col.column_name
+      FROM user_constraints con
+      LEFT JOIN user_cons_columns col 
+        ON con.constraint_name = col.constraint_name
+      WHERE con.table_name = UPPER('${table}')
+      ORDER BY con.constraint_name, col.position
+    `;
+  },
+
+  listForeignKeysQuery(table: string) {
+    return `
+      SELECT 
+        a.constraint_name,
+        a.column_name,
+        c_pk.table_name AS foreign_table,
+        b.column_name AS foreign_column
+      FROM user_cons_columns a
+      JOIN user_constraints c ON a.constraint_name = c.constraint_name
+      JOIN user_constraints c_pk ON c.r_constraint_name = c_pk.constraint_name
+      JOIN user_cons_columns b ON c_pk.constraint_name = b.constraint_name AND a.position = b.position
+      WHERE c.constraint_type = 'R'
+        AND c.table_name = UPPER('${table}')
+      ORDER BY a.constraint_name
+    `;
+  },
+
+  listIndexesQuery(table: string) {
+    return `
+      SELECT 
+        index_name,
+        uniqueness,
+        index_type
+      FROM user_indexes
+      WHERE table_name = UPPER('${table}')
+      ORDER BY index_name
+    `;
   },
 
   modifyDsnForDatabase(dsn: string, _database: string) {

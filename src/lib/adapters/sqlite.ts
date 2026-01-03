@@ -1,7 +1,12 @@
-import type { DatabaseAdapter, ColumnInfo } from './types';
+import type { DatabaseAdapter, ColumnInfo, TableView } from './types';
 
 export const sqliteAdapter: DatabaseAdapter = {
   driver: 'sqlite',
+
+  supportedTableViews(): TableView[] {
+    // SQLite has limited metadata support
+    return ['records', 'columns', 'indexes'];
+  },
 
   listDatabasesQuery() {
     // SQLite doesn't have multiple databases in same connection
@@ -23,6 +28,10 @@ export const sqliteAdapter: DatabaseAdapter = {
   createDatabaseQuery(_name: string) {
     // SQLite doesn't support creating databases - it's file-based
     return null;
+  },
+
+  listIndexesQuery(table: string) {
+    return `PRAGMA index_list(${table})`;
   },
 
   modifyDsnForDatabase(dsn: string, _database: string) {

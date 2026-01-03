@@ -17,6 +17,9 @@ export interface QueryResult {
   error?: string;
 }
 
+// Table view types for metadata tabs
+export type TableView = 'records' | 'columns' | 'constraints' | 'foreignKeys' | 'indexes';
+
 // Database adapter interface - each driver implements this
 export interface DatabaseAdapter {
   readonly driver: Driver;
@@ -27,6 +30,14 @@ export interface DatabaseAdapter {
   listColumnsQuery(table: string): string;
   selectAllQuery(table: string, limit?: number): string;
   createDatabaseQuery(name: string): string | null; // Returns null if not supported
+  
+  // Optional metadata queries - not all drivers support these
+  listConstraintsQuery?(table: string): string;
+  listForeignKeysQuery?(table: string): string;
+  listIndexesQuery?(table: string): string;
+  
+  // Returns which table views this driver supports
+  supportedTableViews(): TableView[];
   
   // DSN manipulation
   modifyDsnForDatabase(dsn: string, database: string): string;

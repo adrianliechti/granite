@@ -1,8 +1,8 @@
 import { useState, useEffect, useRef } from 'react';
 import Editor, { type Monaco } from '@monaco-editor/react';
-import { Play, Sparkles } from 'lucide-react';
+import { Play, Sparkles, Table2, Columns3, ShieldCheck, Link, ListOrdered, ChevronDown, ChevronUp } from 'lucide-react';
 import type { Connection } from '../types';
-import type { ColumnInfo } from '../lib/adapters';
+import type { ColumnInfo, TableView } from '../lib/adapters';
 import type { editor } from 'monaco-editor';
 import { selectAllQuery } from '../lib/adapters';
 
@@ -24,7 +24,21 @@ interface QueryEditorProps {
   // AI panel toggle
   onToggleAI?: () => void;
   aiPanelOpen?: boolean;
+  // Table view actions
+  supportedViews?: TableView[];
+  onSelectView?: (view: TableView) => void;
+  activeView?: TableView | null;
+  onExpandEditor?: () => void;
 }
+
+// View button config
+const viewConfig: Record<TableView, { icon: typeof Table2; label: string }> = {
+  records: { icon: Table2, label: 'Records' },
+  columns: { icon: Columns3, label: 'Columns' },
+  constraints: { icon: ShieldCheck, label: 'Constraints' },
+  foreignKeys: { icon: Link, label: 'Foreign Keys' },
+  indexes: { icon: ListOrdered, label: 'Indexes' },
+};
 
 // SQL keywords for autocomplete
 const SQL_KEYWORDS = [
@@ -37,8 +51,9 @@ const SQL_KEYWORDS = [
   'ELSE', 'END', 'COALESCE', 'NULLIF', 'CAST', 'TRUE', 'FALSE',
 ];
 
-export function QueryEditor({ connection, selectedTable, onExecute, isLoading, schema, value, onChange, onToggleAI, aiPanelOpen }: QueryEditorProps) {
+export function QueryEditor({ connection, selectedTable, onExecute, isLoading, schema, value, onChange, onToggleAI, aiPanelOpen, supportedViews, onSelectView, activeView, onExpandEditor }: QueryEditorProps) {
   const [internalSql, setInternalSql] = useState('');
+  const [isCollapsed, setIsCollapsed] = useState(true);
   // Use controlled state if provided, otherwise use internal state
   const sql = value !== undefined ? value : internalSql;
   const setSql = onChange !== undefined ? onChange : setInternalSql;
@@ -203,17 +218,51 @@ export function QueryEditor({ connection, selectedTable, onExecute, isLoading, s
   };
 
   return (
-    <div className="h-full flex flex-col bg-white dark:bg-[#1a1a1a]/60 dark:backdrop-blur-xl border border-neutral-200 dark:border-white/8 rounded-xl overflow-hidden dark:shadow-2xl" onKeyDown={handleKeyDown}>
+    <div className={`flex flex-col bg-white dark:bg-[#1a1a1a]/60 dark:backdrop-blur-xl border border-neutral-200 dark:border-white/8 rounded-xl overflow-hidden dark:shadow-2xl transition-all ${isCollapsed ? '' : 'h-80'}`} onKeyDown={handleKeyDown}>
       {/* Toolbar */}
       <div className="px-3 py-2.5 flex items-center gap-3 border-b border-neutral-200 dark:border-white/8">
+        {/* Collapse toggle */}
         <button
-          onClick={handleExecute}
-          disabled={!connection || !sql.trim() || isLoading}
-          className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold bg-blue-500 text-white rounded-lg hover:bg-blue-600 disabled:opacity-50 transition-colors"
+          onClick={() => {
+            if (isCollapsed && onExpandEditor) {
+              onExpandEditor();
+            }
+            setIsCollapsed(!isCollapsed);
+          }}
+          className="p-1.5 rounded-lg transition-colors text-neutral-400 hover:text-neutral-600 dark:hover:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-white/5"
+          title={isCollapsed ? 'Expand editor' : 'Collapse editor'}
         >
-          <Play className="w-3.5 h-3.5" />
-          {isLoading ? 'Running...' : 'Run'}
+          {isCollapsed ? <ChevronDown className="w-4 h-4" /> : <ChevronUp className="w-4 h-4" />}
         </button>
+        
+        {/* Table view action buttons */}
+        {selectedTable && supportedViews && onSelectView && (
+          <div className="flex gap-0.5 p-1 bg-neutral-100 dark:bg-white/5 rounded-lg">
+            {supportedViews.map((view) => {
+              const { icon: Icon, label } = viewConfig[view];
+              const isActive = activeView === view;
+              return (
+                <button
+                  key={view}
+                  type="button"
+                  onClick={() => {
+                    onSelectView(view);
+                    setIsCollapsed(true);
+                  }}
+                  title={label}
+                  className={`flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded-md transition-all ${
+                    isActive
+                      ? 'bg-white dark:bg-neutral-700 text-neutral-900 dark:text-neutral-100 shadow-sm'
+                      : 'text-neutral-500 dark:text-neutral-400 hover:text-neutral-700 dark:hover:text-neutral-300 hover:bg-white dark:hover:bg-neutral-700 hover:shadow-sm'
+                  }`}
+                >
+                  <Icon className="w-3.5 h-3.5" />
+                  {label}
+                </button>
+              );
+            })}
+          </div>
+        )}
         
         <div className="flex-1" />
         
@@ -242,39 +291,54 @@ export function QueryEditor({ connection, selectedTable, onExecute, isLoading, s
             <Sparkles className="w-4 h-4" />
           </button>
         )}
-        
-        <span className="text-[10px] text-neutral-400 dark:text-neutral-600">⌘↵</span>
       </div>
 
-      {/* Editor */}
-      <div className="flex-1 min-h-0">
-        <Editor
-          height="100%"
-          defaultLanguage="sql"
-          value={sql}
-          onChange={(value) => setSql(value || '')}
-          onMount={handleEditorMount}
-          theme="vs-dark"
-          options={{
-            quickSuggestions: true,
-            suggestOnTriggerCharacters: true,
-            minimap: { enabled: false },
-            fontSize: 13,
-            fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
-            lineNumbers: 'on',
-            scrollBeyondLastLine: false,
-            wordWrap: 'on',
-            padding: { top: 12, bottom: 12 },
-            renderLineHighlight: 'none',
-            overviewRulerLanes: 0,
-            hideCursorInOverviewRuler: true,
-            overviewRulerBorder: false,
-            scrollbar: { vertical: 'auto', horizontal: 'auto', verticalScrollbarSize: 8, horizontalScrollbarSize: 8 },
-            lineNumbersMinChars: 3,
-            folding: false,
-          }}
-        />
-      </div>
+      {/* Editor - collapsible */}
+      {!isCollapsed && (
+        <>
+          <div className="flex-1 min-h-0">
+            <Editor
+              height="100%"
+              defaultLanguage="sql"
+              value={sql}
+              onChange={(value) => setSql(value || '')}
+              onMount={handleEditorMount}
+              theme="vs-dark"
+              options={{
+                quickSuggestions: true,
+                suggestOnTriggerCharacters: true,
+                minimap: { enabled: false },
+                fontSize: 13,
+                fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
+                lineNumbers: 'on',
+                scrollBeyondLastLine: false,
+                wordWrap: 'on',
+                padding: { top: 12, bottom: 12 },
+                renderLineHighlight: 'none',
+                overviewRulerLanes: 0,
+                hideCursorInOverviewRuler: true,
+                overviewRulerBorder: false,
+                scrollbar: { vertical: 'auto', horizontal: 'auto', verticalScrollbarSize: 8, horizontalScrollbarSize: 8 },
+                lineNumbersMinChars: 3,
+                folding: false,
+              }}
+            />
+          </div>
+          
+          {/* Bottom bar with Run button */}
+          <div className="px-3 py-2 flex items-center gap-2 border-t border-neutral-200 dark:border-white/8">
+            <button
+              onClick={handleExecute}
+              disabled={!connection || !sql.trim() || isLoading}
+              className="flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium text-neutral-600 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-neutral-200 hover:bg-neutral-100 dark:hover:bg-white/5 rounded-md disabled:opacity-50 transition-colors"
+            >
+              <Play className="w-3 h-3" />
+              {isLoading ? 'Running...' : 'Run'}
+            </button>
+            <span className="text-[10px] text-neutral-400 dark:text-neutral-600">⌘↵</span>
+          </div>
+        </>
+      )}
     </div>
   );
 }

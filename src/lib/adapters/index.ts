@@ -1,4 +1,4 @@
-import type { DatabaseAdapter, Driver, ColumnInfo, QueryResult } from './types';
+import type { DatabaseAdapter, Driver, ColumnInfo, QueryResult, TableView } from './types';
 import { postgresAdapter } from './postgres';
 import { mysqlAdapter } from './mysql';
 import { sqliteAdapter } from './sqlite';
@@ -6,7 +6,7 @@ import { sqlserverAdapter } from './sqlserver';
 import { oracleAdapter } from './oracle';
 
 // Re-export types
-export type { DatabaseAdapter, Driver, ColumnInfo } from './types';
+export type { DatabaseAdapter, Driver, ColumnInfo, TableView } from './types';
 export type { QueryResult } from './types';
 
 // Adapter registry
@@ -95,4 +95,30 @@ export async function createDatabase(driver: string, dsn: string, name: string):
 export function supportsCreateDatabase(driver: string): boolean {
   const adapter = getAdapter(driver);
   return adapter.createDatabaseQuery('test') !== null;
+}
+
+// Get supported table views for a driver
+export function getSupportedTableViews(driver: string): TableView[] {
+  const adapter = getAdapter(driver);
+  return adapter.supportedTableViews();
+}
+
+// Generate query for a specific table view
+export function getTableViewQuery(driver: string, table: string, view: TableView): string | null {
+  const adapter = getAdapter(driver);
+  
+  switch (view) {
+    case 'records':
+      return adapter.selectAllQuery(table);
+    case 'columns':
+      return adapter.listColumnsQuery(table);
+    case 'constraints':
+      return adapter.listConstraintsQuery?.(table) ?? null;
+    case 'foreignKeys':
+      return adapter.listForeignKeysQuery?.(table) ?? null;
+    case 'indexes':
+      return adapter.listIndexesQuery?.(table) ?? null;
+    default:
+      return null;
+  }
 }

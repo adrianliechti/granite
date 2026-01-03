@@ -8,7 +8,7 @@ import { ResultsTable } from './components/ResultsTable';
 import { ChatPanel } from './components/ChatPanel';
 import { useLiveQuery } from '@tanstack/react-db';
 import { connectionsCollection } from './lib/collections';
-import { listTables, listColumns, selectAllQuery, executeQuery, type ColumnInfo } from './lib/adapters';
+import { listTables, listColumns, selectAllQuery, executeQuery, getSupportedTableViews, getTableViewQuery, type ColumnInfo, type TableView } from './lib/adapters';
 import type { SQLResponse } from './types';
 import { getConfig } from './config';
 
@@ -75,6 +75,20 @@ function AppContent() {
   // SQL query state (lifted for AI integration)
   const [sql, setSql] = useState('');
   
+  // Active table view state
+  const [activeView, setActiveView] = useState<TableView | null>('records');
+  
+  // Get supported tabs for the current driver
+  const supportedTabs = useMemo(() => {
+    if (!activeConnection) return ['records', 'columns'] as TableView[];
+    return getSupportedTableViews(activeConnection.driver);
+  }, [activeConnection]);
+  
+  // Clear active view when editor is expanded
+  const handleExpandEditor = useCallback(() => {
+    setActiveView(null);
+  }, []);
+  
   // AI chat panel state
   const [aiPanelOpen, setAiPanelOpen] = useState(false);
   const toggleAiPanel = useCallback(() => setAiPanelOpen(prev => !prev), []);
@@ -132,8 +146,20 @@ function AppContent() {
     // Auto-execute query when table is selected
     if (activeConnection) {
       mutation.mutate(selectAllQuery(tbl, activeConnection.driver));
+      setActiveView('records');
     }
   }, [navigate, connectionId, database, activeConnection, mutation]);
+
+  // Handle view selection - fill and execute the appropriate query
+  const handleViewSelect = useCallback((view: TableView) => {
+    if (!activeConnection || !table) return;
+    const query = getTableViewQuery(activeConnection.driver, table, view);
+    if (query) {
+      setSql(query);
+      mutation.mutate(query);
+      setActiveView(view);
+    }
+  }, [activeConnection, table, mutation]);
 
   // Handle cell update - generates and executes UPDATE SQL
   const handleUpdateCell = useCallback(async (
@@ -230,7 +256,7 @@ function AppContent() {
       {/* Main Content */}
       <main className="flex-1 flex flex-col overflow-hidden gap-2 min-w-0">
         {/* Query Editor */}
-        <div className="flex-1 min-h-0">
+        <div className="shrink-0">
           <QueryEditor
             connection={activeConnection ?? null}
             selectedTable={table ?? null}
@@ -241,11 +267,15 @@ function AppContent() {
             onChange={setSql}
             onToggleAI={getConfig().ai?.model ? toggleAiPanel : undefined}
             aiPanelOpen={aiPanelOpen}
+            supportedViews={supportedTabs}
+            onSelectView={handleViewSelect}
+            activeView={activeView}
+            onExpandEditor={handleExpandEditor}
           />
         </div>
 
         {/* Results / Status */}
-        <div className="h-80 min-h-0">
+        <div className="flex-1 min-h-0">
           <ResultsTable
             response={queryResult?.response ?? null}
             duration={queryResult?.duration ?? 0}
