@@ -217,7 +217,7 @@ export function Sidebar({
       <aside className="w-64 bg-white dark:bg-[#1a1a1a]/60 dark:backdrop-blur-xl border border-neutral-200 dark:border-white/8 rounded-xl flex flex-col overflow-hidden dark:shadow-2xl">
         {/* Header */}
         <div className="px-3 py-2.5 flex items-center justify-between gap-2">
-          <h1 className="text-sm font-semibold text-neutral-700 dark:text-neutral-200 pl-0.5">Base</h1>
+          <h1 className="text-sm font-semibold text-neutral-700 dark:text-neutral-200 pl-0.5">Granite</h1>
           <div className="flex items-center gap-1">
             <button
               onClick={() => setModalState({ open: true, connection: null })}

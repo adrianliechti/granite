@@ -1,4 +1,4 @@
-module base
+module github.com/adrianliechti/granite
 
 go 1.25.5
 
@@ -6,6 +6,7 @@ require (
 	github.com/go-sql-driver/mysql v1.9.3
 	github.com/lib/pq v1.10.9
 	github.com/microsoft/go-mssqldb v1.9.5
+	github.com/sijms/go-ora/v2 v2.9.0
 	modernc.org/sqlite v1.42.2
 )
 
@@ -26,7 +27,6 @@ require (
 	github.com/ncruces/go-strftime v0.1.9 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	github.com/shopspring/decimal v1.4.0 // indirect
-	github.com/sijms/go-ora/v2 v2.9.0 // indirect
 	golang.org/x/crypto v0.38.0 // indirect
 	golang.org/x/exp v0.0.0-20250620022241-b7579e27df2b // indirect
 	golang.org/x/net v0.40.0 // indirect

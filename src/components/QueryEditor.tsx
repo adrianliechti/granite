@@ -60,6 +60,18 @@ export function QueryEditor({ connection, selectedTable, onExecute, isLoading, s
   const monacoRef = useRef<Monaco | null>(null);
   const disposableRef = useRef<{ dispose: () => void } | null>(null);
   const schemaRef = useRef<SchemaInfo | undefined>(schema);
+  
+  // Detect dark mode
+  const [isDark, setIsDark] = useState(() => 
+    window.matchMedia('(prefers-color-scheme: dark)').matches
+  );
+  
+  useEffect(() => {
+    const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
+    const handler = (e: MediaQueryListEvent) => setIsDark(e.matches);
+    mediaQuery.addEventListener('change', handler);
+    return () => mediaQuery.removeEventListener('change', handler);
+  }, []);
 
   // Keep schema ref updated
   useEffect(() => {
@@ -220,7 +232,7 @@ export function QueryEditor({ connection, selectedTable, onExecute, isLoading, s
   return (
     <div className={`flex flex-col bg-white dark:bg-[#1a1a1a]/60 dark:backdrop-blur-xl border border-neutral-200 dark:border-white/8 rounded-xl overflow-hidden dark:shadow-2xl transition-all ${isCollapsed ? '' : 'h-80'}`} onKeyDown={handleKeyDown}>
       {/* Toolbar */}
-      <div className="px-3 py-2.5 flex items-center gap-3 border-b border-neutral-200 dark:border-white/8">
+      <div className="h-12 px-3 flex items-center gap-3 border-b border-neutral-200 dark:border-white/8">
         {/* Collapse toggle */}
         <button
           onClick={() => {
@@ -250,14 +262,14 @@ export function QueryEditor({ connection, selectedTable, onExecute, isLoading, s
                     setIsCollapsed(true);
                   }}
                   title={label}
-                  className={`flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded-md transition-all ${
+                  className={`flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded-md transition-all whitespace-nowrap ${
                     isActive
                       ? 'bg-white dark:bg-neutral-700 text-neutral-900 dark:text-neutral-100 shadow-sm'
                       : 'text-neutral-500 dark:text-neutral-400 hover:text-neutral-700 dark:hover:text-neutral-300 hover:bg-white dark:hover:bg-neutral-700 hover:shadow-sm'
                   }`}
                 >
                   <Icon className="w-3.5 h-3.5" />
-                  {label}
+                  <span className="hidden lg:inline">{label}</span>
                 </button>
               );
             })}
@@ -303,7 +315,7 @@ export function QueryEditor({ connection, selectedTable, onExecute, isLoading, s
               value={sql}
               onChange={(value) => setSql(value || '')}
               onMount={handleEditorMount}
-              theme="vs-dark"
+              theme={isDark ? 'vs-dark' : 'vs'}
               options={{
                 quickSuggestions: true,
                 suggestOnTriggerCharacters: true,

@@ -5,7 +5,7 @@ import type { Connection, SavedQuery, AppPreferences } from '../types';
 export const connectionsCollection = createCollection(
   localStorageCollectionOptions<Connection>({
     id: 'connections',
-    storageKey: 'base-connections',
+    storageKey: 'granite-connections',
     getKey: (item) => item.id,
   })
 );
@@ -14,7 +14,7 @@ export const connectionsCollection = createCollection(
 export const savedQueriesCollection = createCollection(
   localStorageCollectionOptions<SavedQuery>({
     id: 'saved-queries',
-    storageKey: 'base-saved-queries',
+    storageKey: 'granite-queries',
     getKey: (item) => item.id,
   })
 );
@@ -23,7 +23,7 @@ export const savedQueriesCollection = createCollection(
 export const preferencesCollection = createCollection(
   localStorageCollectionOptions<AppPreferences>({
     id: 'preferences',
-    storageKey: 'base-preferences',
+    storageKey: 'granite-preferences',
     getKey: (item) => item.id,
   })
 );
