@@ -8,6 +8,10 @@ import (
 // POST /storage/containers - List containers
 func (s *Server) handleStorageContainers(w http.ResponseWriter, r *http.Request) {
 	var req StorageRequest
+<<<<<<< HEAD
+=======
+
+>>>>>>> a59f79b23a93bc5d1230c130632a6daa6204d0cf
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "Invalid request body")
 		return
@@ -15,12 +19,20 @@ func (s *Server) handleStorageContainers(w http.ResponseWriter, r *http.Request)
 
 	ctx := r.Context()
 	provider, err := newStorageProvider(ctx, req)
+<<<<<<< HEAD
+=======
+
+>>>>>>> a59f79b23a93bc5d1230c130632a6daa6204d0cf
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
 	containers, err := provider.ListContainers(ctx)
+<<<<<<< HEAD
+=======
+
+>>>>>>> a59f79b23a93bc5d1230c130632a6daa6204d0cf
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -33,6 +45,10 @@ func (s *Server) handleStorageContainers(w http.ResponseWriter, r *http.Request)
 // POST /storage/containers/create - Create a new container
 func (s *Server) handleStorageCreateContainer(w http.ResponseWriter, r *http.Request) {
 	var req CreateContainerRequest
+<<<<<<< HEAD
+=======
+
+>>>>>>> a59f79b23a93bc5d1230c130632a6daa6204d0cf
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "Invalid request body")
 		return
@@ -45,6 +61,10 @@ func (s *Server) handleStorageCreateContainer(w http.ResponseWriter, r *http.Req
 
 	ctx := r.Context()
 	provider, err := newStorageProvider(ctx, req.StorageRequest)
+<<<<<<< HEAD
+=======
+
+>>>>>>> a59f79b23a93bc5d1230c130632a6daa6204d0cf
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return

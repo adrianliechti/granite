@@ -29,6 +29,10 @@ func (s *Server) handleStorageUploadObject(w http.ResponseWriter, r *http.Reques
 
 	// Parse config
 	var configMap map[string]any
+<<<<<<< HEAD
+=======
+
+>>>>>>> a59f79b23a93bc5d1230c130632a6daa6204d0cf
 	if err := json.Unmarshal([]byte(configJSON), &configMap); err != nil {
 		writeError(w, http.StatusBadRequest, "Invalid config JSON")
 		return
@@ -42,6 +46,10 @@ func (s *Server) handleStorageUploadObject(w http.ResponseWriter, r *http.Reques
 
 	ctx := r.Context()
 	storageProvider, err := newStorageProvider(ctx, storageReq)
+<<<<<<< HEAD
+=======
+
+>>>>>>> a59f79b23a93bc5d1230c130632a6daa6204d0cf
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -49,14 +57,26 @@ func (s *Server) handleStorageUploadObject(w http.ResponseWriter, r *http.Reques
 
 	// Get the uploaded file
 	file, header, err := r.FormFile("file")
+<<<<<<< HEAD
+=======
+
+>>>>>>> a59f79b23a93bc5d1230c130632a6daa6204d0cf
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "No file uploaded")
 		return
 	}
+<<<<<<< HEAD
+=======
+
+>>>>>>> a59f79b23a93bc5d1230c130632a6daa6204d0cf
 	defer file.Close()
 
 	// Read file data
 	data, err := io.ReadAll(file)
+<<<<<<< HEAD
+=======
+
+>>>>>>> a59f79b23a93bc5d1230c130632a6daa6204d0cf
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "Failed to read file")
 		return
@@ -64,9 +84,17 @@ func (s *Server) handleStorageUploadObject(w http.ResponseWriter, r *http.Reques
 
 	// Get content type from form or header
 	contentType := r.FormValue("contentType")
+<<<<<<< HEAD
 	if contentType == "" {
 		contentType = header.Header.Get("Content-Type")
 	}
+=======
+
+	if contentType == "" {
+		contentType = header.Header.Get("Content-Type")
+	}
+
+>>>>>>> a59f79b23a93bc5d1230c130632a6daa6204d0cf
 	if contentType == "" {
 		// Detect from file content
 		mtype := mimetype.Detect(data)

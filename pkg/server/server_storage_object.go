@@ -10,6 +10,10 @@ import (
 // POST /storage/objects - List objects in a container
 func (s *Server) handleStorageObjects(w http.ResponseWriter, r *http.Request) {
 	var req ListObjectsRequest
+<<<<<<< HEAD
+=======
+
+>>>>>>> a59f79b23a93bc5d1230c130632a6daa6204d0cf
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "Invalid request body")
 		return
@@ -22,6 +26,10 @@ func (s *Server) handleStorageObjects(w http.ResponseWriter, r *http.Request) {
 
 	ctx := r.Context()
 	provider, err := newStorageProvider(ctx, req.StorageRequest)
+<<<<<<< HEAD
+=======
+
+>>>>>>> a59f79b23a93bc5d1230c130632a6daa6204d0cf
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -35,6 +43,10 @@ func (s *Server) handleStorageObjects(w http.ResponseWriter, r *http.Request) {
 	}
 
 	result, err := provider.ListObjects(ctx, req.Container, opts)
+<<<<<<< HEAD
+=======
+
+>>>>>>> a59f79b23a93bc5d1230c130632a6daa6204d0cf
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -47,6 +59,10 @@ func (s *Server) handleStorageObjects(w http.ResponseWriter, r *http.Request) {
 // POST /storage/object/details - Get object metadata
 func (s *Server) handleStorageObjectDetails(w http.ResponseWriter, r *http.Request) {
 	var req ObjectRequest
+<<<<<<< HEAD
+=======
+
+>>>>>>> a59f79b23a93bc5d1230c130632a6daa6204d0cf
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "Invalid request body")
 		return
@@ -59,12 +75,20 @@ func (s *Server) handleStorageObjectDetails(w http.ResponseWriter, r *http.Reque
 
 	ctx := r.Context()
 	provider, err := newStorageProvider(ctx, req.StorageRequest)
+<<<<<<< HEAD
+=======
+
+>>>>>>> a59f79b23a93bc5d1230c130632a6daa6204d0cf
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
 	result, err := provider.GetObjectDetails(ctx, req.Container, req.Key)
+<<<<<<< HEAD
+=======
+
+>>>>>>> a59f79b23a93bc5d1230c130632a6daa6204d0cf
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -77,6 +101,10 @@ func (s *Server) handleStorageObjectDetails(w http.ResponseWriter, r *http.Reque
 // POST /storage/object/presign - Generate presigned URL
 func (s *Server) handleStoragePresignedURL(w http.ResponseWriter, r *http.Request) {
 	var req ObjectRequest
+<<<<<<< HEAD
+=======
+
+>>>>>>> a59f79b23a93bc5d1230c130632a6daa6204d0cf
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "Invalid request body")
 		return
@@ -89,17 +117,29 @@ func (s *Server) handleStoragePresignedURL(w http.ResponseWriter, r *http.Reques
 
 	ctx := r.Context()
 	provider, err := newStorageProvider(ctx, req.StorageRequest)
+<<<<<<< HEAD
+=======
+
+>>>>>>> a59f79b23a93bc5d1230c130632a6daa6204d0cf
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
 	expiresIn := req.ExpiresIn
+<<<<<<< HEAD
+=======
+
+>>>>>>> a59f79b23a93bc5d1230c130632a6daa6204d0cf
 	if expiresIn <= 0 {
 		expiresIn = 3600 // Default 1 hour
 	}
 
 	url, err := provider.GetPresignedURL(ctx, req.Container, req.Key, expiresIn)
+<<<<<<< HEAD
+=======
+
+>>>>>>> a59f79b23a93bc5d1230c130632a6daa6204d0cf
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
