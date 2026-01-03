@@ -134,7 +134,7 @@ export function ConnectionModal({ connection, onSave, onClose }: ConnectionModal
               placeholder="My Database"
               value={name}
               onChange={(e) => setName(e.target.value)}
-              className="w-full px-3 py-2 text-sm bg-neutral-50 dark:bg-white/5 border border-neutral-200 dark:border-white/10 rounded-xl focus:outline-none focus:ring-2 focus:ring-green-500/50 focus:border-green-500 transition-colors"
+              className="w-full px-3 py-2 text-sm text-neutral-800 dark:text-neutral-100 placeholder-neutral-400 dark:placeholder-neutral-500 bg-neutral-50 dark:bg-white/5 border border-neutral-200 dark:border-white/10 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500 transition-colors"
               autoFocus
             />
           </div>
@@ -183,7 +183,7 @@ export function ConnectionModal({ connection, onSave, onClose }: ConnectionModal
                 setTestStatus('idle');
                 setTestError(null);
               }}
-              className="w-full px-3 py-2 text-sm font-mono bg-neutral-50 dark:bg-white/5 border border-neutral-200 dark:border-white/10 rounded-xl focus:outline-none focus:ring-2 focus:ring-green-500/50 focus:border-green-500 transition-colors"
+              className="w-full px-3 py-2 text-sm font-mono text-neutral-800 dark:text-neutral-100 placeholder-neutral-400 dark:placeholder-neutral-500 bg-neutral-50 dark:bg-white/5 border border-neutral-200 dark:border-white/10 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500 transition-colors"
             />
             <p className="text-[10px] text-neutral-400 dark:text-neutral-600">
               {info.label} connection string format
@@ -196,22 +196,22 @@ export function ConnectionModal({ connection, onSave, onClose }: ConnectionModal
               type="button"
               onClick={handleTest}
               disabled={!dsn || testStatus === 'testing'}
-              className="flex items-center gap-2 px-3 py-2 text-xs font-medium bg-neutral-100 dark:bg-white/5 hover:bg-neutral-200 dark:hover:bg-white/10 disabled:opacity-50 rounded-lg transition-colors"
+              className="flex items-center gap-2 px-3 py-2 text-xs font-medium text-neutral-700 dark:text-neutral-200 bg-neutral-100 dark:bg-white/5 hover:bg-neutral-200 dark:hover:bg-white/10 disabled:opacity-50 rounded-lg transition-colors"
             >
               {testStatus === 'testing' ? (
-                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                <Loader2 className="w-3.5 h-3.5 animate-spin text-neutral-500 dark:text-neutral-400" />
               ) : testStatus === 'success' ? (
-                <CheckCircle2 className="w-3.5 h-3.5 text-green-500" />
+                <CheckCircle2 className="w-3.5 h-3.5 text-blue-500" />
               ) : testStatus === 'error' ? (
                 <XCircle className="w-3.5 h-3.5 text-red-500" />
               ) : (
-                <Plug className="w-3.5 h-3.5" />
+                <Plug className="w-3.5 h-3.5 text-neutral-500 dark:text-neutral-400" />
               )}
               {testStatus === 'testing' ? 'Testing...' : 'Test Connection'}
             </button>
             
             {testStatus === 'success' && (
-              <p className="text-xs text-green-600 dark:text-green-400">
+              <p className="text-xs text-blue-600 dark:text-blue-400">
                 ✓ Connection successful
               </p>
             )}
@@ -234,7 +234,7 @@ export function ConnectionModal({ connection, onSave, onClose }: ConnectionModal
             <button
               type="submit"
               disabled={!name || !dsn}
-              className="flex-1 px-4 py-2.5 text-sm font-medium bg-green-500 text-white rounded-xl hover:bg-green-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              className="flex-1 px-4 py-2.5 text-sm font-medium bg-blue-500 text-white rounded-xl hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
             >
               {isEditing ? 'Save Changes' : 'Add Connection'}
             </button>

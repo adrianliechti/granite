@@ -33,6 +33,10 @@ export const postgresAdapter: DatabaseAdapter = {
     return `SELECT * FROM ${table} LIMIT ${limit}`;
   },
 
+  createDatabaseQuery(name: string) {
+    return `CREATE DATABASE "${name}"`;
+  },
+
   modifyDsnForDatabase(dsn: string, database: string) {
     // PostgreSQL DSN format: postgres://user:pass@host:port/dbname?params
     const url = new URL(dsn);

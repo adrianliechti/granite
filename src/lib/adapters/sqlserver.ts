@@ -36,6 +36,10 @@ export const sqlserverAdapter: DatabaseAdapter = {
     return `SELECT TOP ${limit} * FROM ${table}`;
   },
 
+  createDatabaseQuery(name: string) {
+    return `CREATE DATABASE [${name}]`;
+  },
+
   modifyDsnForDatabase(dsn: string, database: string) {
     // MSSQL DSN format: sqlserver://user:pass@host:port?database=dbname
     const url = new URL(dsn);

@@ -19,6 +19,10 @@ export const mysqlAdapter: DatabaseAdapter = {
     return `SELECT * FROM ${table} LIMIT ${limit}`;
   },
 
+  createDatabaseQuery(name: string) {
+    return `CREATE DATABASE \`${name}\``;
+  },
+
   modifyDsnForDatabase(dsn: string, database: string) {
     // MySQL DSN format: user:pass@tcp(host:port)/dbname
     const dsnParts = dsn.split('/');

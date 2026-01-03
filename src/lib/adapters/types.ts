@@ -26,6 +26,7 @@ export interface DatabaseAdapter {
   listTablesQuery(): string;
   listColumnsQuery(table: string): string;
   selectAllQuery(table: string, limit?: number): string;
+  createDatabaseQuery(name: string): string | null; // Returns null if not supported
   
   // DSN manipulation
   modifyDsnForDatabase(dsn: string, database: string): string;

@@ -78,3 +78,21 @@ export function selectAllQuery(table: string, driver: string, limit = 100): stri
   const adapter = getAdapter(driver);
   return adapter.selectAllQuery(table, limit);
 }
+
+// Create a new database
+export async function createDatabase(driver: string, dsn: string, name: string): Promise<void> {
+  const adapter = getAdapter(driver);
+  const query = adapter.createDatabaseQuery(name);
+  
+  if (!query) {
+    throw new Error(`Creating databases is not supported for ${driver}`);
+  }
+  
+  await executeQuery(driver, dsn, query);
+}
+
+// Check if the driver supports database creation
+export function supportsCreateDatabase(driver: string): boolean {
+  const adapter = getAdapter(driver);
+  return adapter.createDatabaseQuery('test') !== null;
+}

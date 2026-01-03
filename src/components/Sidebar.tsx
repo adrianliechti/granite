@@ -1,9 +1,9 @@
 import { useState, useMemo } from 'react';
-import { useQuery } from '@tanstack/react-query';
-import { Plus, Trash2, Pencil } from 'lucide-react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { Plus, Trash2, Pencil, Database } from 'lucide-react';
 import { useLiveQuery } from '@tanstack/react-db';
 import { connectionsCollection } from '../lib/collections';
-import { listDatabases, listTables } from '../lib/adapters';
+import { listDatabases, listTables, createDatabase, supportsCreateDatabase } from '../lib/adapters';
 import { ConnectionModal } from './ConnectionModal';
 import type { Connection } from '../types';
 
@@ -36,7 +36,7 @@ function formatTimestamp(date: string): string {
 }
 
 function getStatusColor(isActive: boolean): string {
-  return isActive ? 'bg-green-500' : 'bg-neutral-500';
+  return isActive ? 'bg-blue-500' : 'bg-neutral-500';
 }
 
 export function Sidebar({
@@ -51,7 +51,12 @@ export function Sidebar({
     q.from({ conn: connectionsCollection }).orderBy(({ conn }) => conn.createdAt, 'desc')
   );
 
+  const queryClient = useQueryClient();
   const [modalState, setModalState] = useState<{ open: boolean; connection?: Connection | null }>({ open: false });
+  const [createDbModal, setCreateDbModal] = useState<{ open: boolean; connectionId: string | null }>({ open: false, connectionId: null });
+  const [newDbName, setNewDbName] = useState('');
+  const [createDbError, setCreateDbError] = useState<string | null>(null);
+  const [isCreatingDb, setIsCreatingDb] = useState(false);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
   const activeConnection = (connections?.data ?? []).find((c) => c.id === activeConnectionId);
@@ -128,6 +133,25 @@ export function Sidebar({
     }
   };
 
+  const handleCreateDatabase = async () => {
+    if (!activeConnection || !newDbName.trim()) return;
+    
+    setIsCreatingDb(true);
+    setCreateDbError(null);
+    
+    try {
+      await createDatabase(activeConnection.driver, activeConnection.dsn, newDbName.trim());
+      // Refresh databases list
+      await queryClient.invalidateQueries({ queryKey: ['databases', activeConnectionId] });
+      setCreateDbModal({ open: false, connectionId: null });
+      setNewDbName('');
+    } catch (err) {
+      setCreateDbError(err instanceof Error ? err.message : 'Failed to create database');
+    } finally {
+      setIsCreatingDb(false);
+    }
+  };
+
   return (
     <>
       {/* Connection Modal */}
@@ -137,6 +161,57 @@ export function Sidebar({
           onSave={saveConnection}
           onClose={() => setModalState({ open: false })}
         />
+      )}
+
+      {/* Create Database Modal */}
+      {createDbModal.open && activeConnection && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+          <div className="bg-white dark:bg-[#1a1a1a] rounded-xl border border-neutral-200 dark:border-white/10 p-4 w-80 shadow-xl">
+            <div className="flex items-center gap-2 mb-4">
+              <Database className="w-5 h-5 text-blue-500" />
+              <h2 className="text-sm font-semibold text-neutral-700 dark:text-neutral-200">Create Database</h2>
+            </div>
+            <input
+              type="text"
+              value={newDbName}
+              onChange={(e) => setNewDbName(e.target.value)}
+              placeholder="Database name"
+              className="w-full px-3 py-2 text-sm rounded-lg border border-neutral-200 dark:border-white/10 bg-neutral-50 dark:bg-white/5 text-neutral-700 dark:text-neutral-200 placeholder-neutral-400 dark:placeholder-neutral-500 focus:outline-none focus:ring-2 focus:ring-blue-500/50"
+              autoFocus
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && newDbName.trim()) {
+                  handleCreateDatabase();
+                } else if (e.key === 'Escape') {
+                  setCreateDbModal({ open: false, connectionId: null });
+                  setNewDbName('');
+                  setCreateDbError(null);
+                }
+              }}
+            />
+            {createDbError && (
+              <p className="mt-2 text-xs text-red-500">{createDbError}</p>
+            )}
+            <div className="flex items-center justify-end gap-2 mt-4">
+              <button
+                onClick={() => {
+                  setCreateDbModal({ open: false, connectionId: null });
+                  setNewDbName('');
+                  setCreateDbError(null);
+                }}
+                className="px-3 py-1.5 text-xs rounded-lg text-neutral-600 dark:text-neutral-400 hover:bg-neutral-100 dark:hover:bg-white/5 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleCreateDatabase}
+                disabled={isCreatingDb || !newDbName.trim()}
+                className="px-3 py-1.5 text-xs rounded-lg bg-blue-500 text-white hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              >
+                {isCreatingDb ? 'Creating...' : 'Create'}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       <aside className="w-64 bg-white dark:bg-[#1a1a1a]/60 dark:backdrop-blur-xl border border-neutral-200 dark:border-white/8 rounded-xl flex flex-col overflow-hidden dark:shadow-2xl">
@@ -250,13 +325,13 @@ export function Sidebar({
                                           key={table}
                                           className={`group flex items-center gap-2 px-3 py-1.5 rounded-lg cursor-pointer transition-colors ${
                                             activeTable === table
-                                              ? 'bg-green-500/10 dark:bg-green-500/20'
+                                              ? 'bg-blue-500/10 dark:bg-blue-500/20'
                                               : 'hover:bg-neutral-100 dark:hover:bg-white/5'
                                           }`}
                                           onClick={() => onSelectTable(table)}
                                         >
-                                          <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${activeTable === table ? 'bg-green-500' : 'bg-neutral-400'}`} />
-                                          <span className={`text-xs truncate flex-1 ${activeTable === table ? 'text-green-600 dark:text-green-400' : 'text-neutral-500 dark:text-neutral-400'}`}>
+                                          <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${activeTable === table ? 'bg-blue-500' : 'bg-neutral-400'}`} />
+                                          <span className={`text-xs truncate flex-1 ${activeTable === table ? 'text-blue-600 dark:text-blue-400' : 'text-neutral-500 dark:text-neutral-400'}`}>
                                             {table}
                                           </span>
                                         </div>
@@ -275,6 +350,21 @@ export function Sidebar({
                               <div className="px-3 py-1.5 text-xs text-neutral-400 dark:text-neutral-600">
                                 No databases
                               </div>
+                            )}
+                            {/* Create Database Button */}
+                            {supportsCreateDatabase(conn.driver) && (
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setCreateDbModal({ open: true, connectionId: conn.id });
+                                }}
+                                className="flex items-center gap-2 px-3 py-1.5 w-full rounded-lg hover:bg-neutral-100 dark:hover:bg-white/5 cursor-pointer transition-colors text-left"
+                              >
+                                <Plus className="w-3 h-3 text-neutral-400 dark:text-neutral-500" />
+                                <span className="text-xs text-neutral-400 dark:text-neutral-500">
+                                  New database
+                                </span>
+                              </button>
                             )}
                           </div>
                         )}

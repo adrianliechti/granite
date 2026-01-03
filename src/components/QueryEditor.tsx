@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import Editor, { type Monaco } from '@monaco-editor/react';
-import { Play } from 'lucide-react';
+import { Play, Sparkles } from 'lucide-react';
 import type { Connection } from '../types';
 import type { ColumnInfo } from '../lib/adapters';
 import type { editor } from 'monaco-editor';
@@ -18,6 +18,12 @@ interface QueryEditorProps {
   onExecute: (sql: string) => void;
   isLoading: boolean;
   schema?: SchemaInfo;
+  // Controlled state for AI integration
+  value?: string;
+  onChange?: (sql: string) => void;
+  // AI panel toggle
+  onToggleAI?: () => void;
+  aiPanelOpen?: boolean;
 }
 
 // SQL keywords for autocomplete
@@ -31,8 +37,11 @@ const SQL_KEYWORDS = [
   'ELSE', 'END', 'COALESCE', 'NULLIF', 'CAST', 'TRUE', 'FALSE',
 ];
 
-export function QueryEditor({ connection, selectedTable, onExecute, isLoading, schema }: QueryEditorProps) {
-  const [sql, setSql] = useState('');
+export function QueryEditor({ connection, selectedTable, onExecute, isLoading, schema, value, onChange, onToggleAI, aiPanelOpen }: QueryEditorProps) {
+  const [internalSql, setInternalSql] = useState('');
+  // Use controlled state if provided, otherwise use internal state
+  const sql = value !== undefined ? value : internalSql;
+  const setSql = onChange !== undefined ? onChange : setInternalSql;
   const monacoRef = useRef<Monaco | null>(null);
   const disposableRef = useRef<{ dispose: () => void } | null>(null);
   const schemaRef = useRef<SchemaInfo | undefined>(schema);
@@ -200,7 +209,7 @@ export function QueryEditor({ connection, selectedTable, onExecute, isLoading, s
         <button
           onClick={handleExecute}
           disabled={!connection || !sql.trim() || isLoading}
-          className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold bg-green-500 text-white rounded-lg hover:bg-green-600 disabled:opacity-50 transition-colors"
+          className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold bg-blue-500 text-white rounded-lg hover:bg-blue-600 disabled:opacity-50 transition-colors"
         >
           <Play className="w-3.5 h-3.5" />
           {isLoading ? 'Running...' : 'Run'}
@@ -219,6 +228,20 @@ export function QueryEditor({ connection, selectedTable, onExecute, isLoading, s
             'No connection'
           )}
         </span>
+        
+        {onToggleAI && (
+          <button
+            onClick={onToggleAI}
+            className={`p-1.5 rounded-lg transition-colors ${
+              aiPanelOpen 
+                ? 'bg-amber-500/10 text-amber-500' 
+                : 'text-neutral-400 hover:text-amber-500 hover:bg-amber-500/10'
+            }`}
+            title="Toggle AI Assistant"
+          >
+            <Sparkles className="w-4 h-4" />
+          </button>
+        )}
         
         <span className="text-[10px] text-neutral-400 dark:text-neutral-600">⌘↵</span>
       </div>

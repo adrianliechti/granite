@@ -5,10 +5,12 @@ import { router } from './router';
 import { Sidebar } from './components/Sidebar';
 import { QueryEditor, type SchemaInfo } from './components/QueryEditor';
 import { ResultsTable } from './components/ResultsTable';
+import { ChatPanel } from './components/ChatPanel';
 import { useLiveQuery } from '@tanstack/react-db';
 import { connectionsCollection } from './lib/collections';
 import { listTables, listColumns, selectAllQuery, executeQuery, type ColumnInfo } from './lib/adapters';
 import type { SQLResponse } from './types';
+import { getConfig } from './config';
 
 const queryClient = new QueryClient();
 
@@ -69,6 +71,13 @@ function AppContent() {
       columns: columnsMap ?? {},
     };
   }, [tables, columnsMap]);
+
+  // SQL query state (lifted for AI integration)
+  const [sql, setSql] = useState('');
+  
+  // AI chat panel state
+  const [aiPanelOpen, setAiPanelOpen] = useState(false);
+  const toggleAiPanel = useCallback(() => setAiPanelOpen(prev => !prev), []);
 
   const [queryResult, setQueryResult] = useState<{
     response: SQLResponse | null;
@@ -200,6 +209,12 @@ function AppContent() {
     }
   }, [activeConnection, table, queryResult?.response?.columns, mutation]);
 
+  // Query setters for AI integration
+  const querySetters = useMemo(() => ({
+    setQuery: setSql,
+    executeQuery: handleExecute,
+  }), [handleExecute]);
+
   return (
     <div className="h-screen flex bg-neutral-50 dark:bg-[#0d0d0d] py-2 pr-2 pl-1 gap-2">
       {/* Sidebar */}
@@ -222,6 +237,10 @@ function AppContent() {
             onExecute={handleExecute}
             isLoading={mutation.isPending}
             schema={schema}
+            value={sql}
+            onChange={setSql}
+            onToggleAI={getConfig().ai?.model ? toggleAiPanel : undefined}
+            aiPanelOpen={aiPanelOpen}
           />
         </div>
 
@@ -237,6 +256,21 @@ function AppContent() {
           />
         </div>
       </main>
+
+      {/* AI Chat Panel */}
+      {aiPanelOpen && getConfig().ai?.model && (
+        <ChatPanel
+          isOpen={aiPanelOpen}
+          onClose={toggleAiPanel}
+          connection={activeConnection ?? null}
+          database={database ?? null}
+          table={table ?? null}
+          currentQuery={sql}
+          queryResult={queryResult?.response ?? null}
+          schema={schema}
+          setters={querySetters}
+        />
+      )}
     </div>
   );
 }
