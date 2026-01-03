@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import Editor, { type Monaco } from '@monaco-editor/react';
 import { Play, Sparkles, Table2, Columns3, ShieldCheck, Link, ListOrdered, ChevronDown, ChevronUp } from 'lucide-react';
-import type { Connection } from '../types';
+import type { DatabaseConnection } from '../types';
 import type { ColumnInfo, TableView } from '../lib/adapters';
 import type { editor } from 'monaco-editor';
 import { selectAllQuery } from '../lib/adapters';
@@ -13,7 +13,7 @@ export interface SchemaInfo {
 }
 
 interface QueryEditorProps {
-  connection: Connection | null;
+  connection: DatabaseConnection | null;
   selectedTable: string | null;
   onExecute: (sql: string) => void;
   isLoading: boolean;
