@@ -20,9 +20,15 @@ rustfsadmin
 ```
 
 ```
-docker run -p 10000:10000 -p 10001:10001 -p 10002:10002 mcr.microsoft.com/azure-storage/azurite
+docker run -it --rm -p 10000:10000 -p 10001:10001 -p 10002:10002 mcr.microsoft.com/azure-storage/azurite
 
 devstoreaccount1
 Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==
 
+```
+
+```
+docker run -it --rm -p 6379:6379 redis:latest
+
+redis://localhost:6379/0
 ```

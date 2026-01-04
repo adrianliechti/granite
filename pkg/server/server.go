@@ -40,9 +40,9 @@ func New(cfg *config.Config) (*Server, error) {
 	mux.HandleFunc("PUT /data/{store}/{id}", s.handleDataPut)
 	mux.HandleFunc("DELETE /data/{store}/{id}", s.handleDataDelete)
 
-	// SQL endpoints
-	mux.HandleFunc("POST /sql/query", s.handleQuery)
-	mux.HandleFunc("POST /sql/execute", s.handleExecute)
+	// Database endpoints
+	mux.HandleFunc("POST /db/query", s.handleDatabaseQuery)
+	mux.HandleFunc("POST /db/execute", s.handleDatabaseExecute)
 
 	// Storage endpoints
 	mux.HandleFunc("POST /storage/containers", s.handleStorageContainers)

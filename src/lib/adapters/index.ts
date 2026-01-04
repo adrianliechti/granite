@@ -4,6 +4,7 @@ import { mysqlAdapter } from './mysql';
 import { sqliteAdapter } from './sqlite';
 import { sqlserverAdapter } from './sqlserver';
 import { oracleAdapter } from './oracle';
+import { redisAdapter } from './redis';
 
 // Re-export types
 export type { DatabaseAdapter, Driver, ColumnInfo, TableView } from './types';
@@ -19,6 +20,7 @@ const adapters: Record<Driver, DatabaseAdapter> = {
   sqlite: sqliteAdapter,
   sqlserver: sqlserverAdapter,
   oracle: oracleAdapter,
+  redis: redisAdapter,
 };
 
 // Get adapter for a driver
@@ -30,12 +32,33 @@ export function getAdapter(driver: string): DatabaseAdapter {
   return adapter;
 }
 
+// Build config for database request based on driver
+export function buildDatabaseConfig(driver: string, dsn: string): Record<string, unknown> {
+  if (driver === 'redis') {
+    // Parse Redis DSN: redis://[:password@]host[:port][/db]
+    const url = new URL(dsn);
+    return {
+      host: url.hostname || 'localhost',
+      port: url.port ? parseInt(url.port, 10) : 6379,
+      password: url.password || undefined,
+      db: url.pathname ? parseInt(url.pathname.slice(1), 10) || 0 : 0,
+    };
+  }
+  // SQL databases just need driver and dsn
+  return { dsn };
+}
+
 // Execute a query via the backend API (for SELECT-like queries that return rows)
 export async function executeQuery(driver: string, dsn: string, query: string): Promise<QueryResult> {
-  const response = await fetch('/sql/query', {
+  const response = await fetch('/db/query', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ driver, dsn, query, params: [] }),
+    body: JSON.stringify({ 
+      provider: driver, 
+      config: buildDatabaseConfig(driver, dsn), 
+      query, 
+      params: [] 
+    }),
   });
   
   if (!response.ok) {
@@ -48,10 +71,15 @@ export async function executeQuery(driver: string, dsn: string, query: string): 
 
 // Execute a statement via the backend API (for INSERT/UPDATE/DELETE that modify data)
 export async function executeStatement(driver: string, dsn: string, query: string): Promise<QueryResult> {
-  const response = await fetch('/sql/execute', {
+  const response = await fetch('/db/execute', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ driver, dsn, query, params: [] }),
+    body: JSON.stringify({ 
+      provider: driver, 
+      config: buildDatabaseConfig(driver, dsn), 
+      query, 
+      params: [] 
+    }),
   });
   
   if (!response.ok) {

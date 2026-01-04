@@ -2,7 +2,7 @@ package storage
 
 import (
 	"context"
-	"path/filepath"
+	"path"
 	"strings"
 )
 
@@ -86,5 +86,5 @@ type ObjectDetails struct {
 // GetObjectName extracts the display name from an object key
 func GetObjectName(key string) string {
 	key = strings.TrimSuffix(key, "/")
-	return filepath.Base(key)
+	return path.Base(key)
 }

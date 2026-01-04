@@ -12,15 +12,15 @@ type ErrorResponse struct {
 	Message string `json:"message"`
 }
 
-type SQLRequest struct {
-	Driver string `json:"driver"`
-	DSN    string `json:"dsn"`
+type DatabaseRequest struct {
+	Provider string         `json:"provider"` // "sql" or "redis"
+	Config   map[string]any `json:"config"`
 
 	Query  string `json:"query"`
 	Params []any  `json:"params"`
 }
 
-type SQLResponse struct {
+type DatabaseResponse struct {
 	Columns      []string         `json:"columns,omitempty"`
 	Rows         []map[string]any `json:"rows,omitempty"`
 	RowsAffected int64            `json:"rows_affected,omitempty"`

@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { X, Loader2, CheckCircle2, XCircle, Plug, Database, Cloud } from 'lucide-react';
+import { buildDatabaseConfig } from '../lib/adapters';
 import type { 
   Connection, 
   DatabaseConnection, 
@@ -40,6 +41,10 @@ const driverInfo: Record<DatabaseDriver, { label: string; placeholder: string }>
     label: 'Oracle',
     placeholder: 'oracle://user:password@localhost:1521/service_name',
   },
+  redis: {
+    label: 'Redis',
+    placeholder: 'redis://localhost:6379/0',
+  },
 };
 
 const driverStyles: Record<DatabaseDriver, { active: string; label: string }> = {
@@ -62,6 +67,10 @@ const driverStyles: Record<DatabaseDriver, { active: string; label: string }> = 
   oracle: {
     active: 'bg-orange-500/10 border-orange-500/50 text-orange-600 dark:text-orange-400',
     label: 'Oracle',
+  },
+  redis: {
+    active: 'bg-red-500/10 border-red-500/50 text-red-600 dark:text-red-400',
+    label: 'Redis',
   },
 };
 
@@ -147,10 +156,19 @@ export function ConnectionModal({ connection, onSave, onClose }: ConnectionModal
     try {
       if (category === 'database') {
         if (!dsn) return;
-        const response = await fetch('/sql/query', {
+        
+        // Use appropriate test query for driver
+        const testQuery = driver === 'redis' ? 'KEYS *' : 'SELECT 1';
+        
+        const response = await fetch('/db/query', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ driver, dsn, query: 'SELECT 1', params: [] }),
+          body: JSON.stringify({ 
+            provider: driver, 
+            config: buildDatabaseConfig(driver, dsn), 
+            query: testQuery, 
+            params: [] 
+          }),
         });
         
         const data = await response.json();
@@ -158,6 +176,9 @@ export function ConnectionModal({ connection, onSave, onClose }: ConnectionModal
         if (data.error) {
           setTestStatus('error');
           setTestError(data.error);
+        } else if (!response.ok) {
+          setTestStatus('error');
+          setTestError(data.message || 'Connection failed');
         } else {
           setTestStatus('success');
         }

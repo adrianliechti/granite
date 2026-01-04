@@ -1,5 +1,5 @@
 // Supported database drivers
-export type Driver = 'postgres' | 'mysql' | 'sqlite' | 'sqlserver' | 'oracle';
+export type Driver = 'postgres' | 'mysql' | 'sqlite' | 'sqlserver' | 'oracle' | 'redis';
 
 // Column information
 export interface ColumnInfo {

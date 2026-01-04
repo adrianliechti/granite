@@ -27,7 +27,7 @@ export default defineConfig({
         target: 'http://localhost:7777',
         changeOrigin: true,
       },
-      '/sql': {
+      '/db': {
         target: 'http://127.0.0.1:7777',
         changeOrigin: true,
       },
