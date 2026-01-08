@@ -3,12 +3,30 @@ package server
 import (
 	"encoding/json"
 	"net/http"
+	"os"
 
 	"github.com/adrianliechti/granite/pkg/storage"
 )
 
-// POST /storage/objects - List objects in a container
+// POST /storage/{connection}/objects - List objects in a container
 func (s *Server) handleStorageObjects(w http.ResponseWriter, r *http.Request) {
+	connID := r.PathValue("connection")
+
+	conn, err := s.getConnection(connID)
+	if err != nil {
+		if os.IsNotExist(err) {
+			writeError(w, http.StatusNotFound, "connection not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	if conn.AmazonS3 == nil && conn.AzureBlob == nil {
+		writeError(w, http.StatusBadRequest, "connection is not a storage connection")
+		return
+	}
+
 	var req ListObjectsRequest
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -22,7 +40,7 @@ func (s *Server) handleStorageObjects(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ctx := r.Context()
-	provider, err := newStorageProvider(ctx, req.StorageRequest)
+	provider, err := newStorageProviderFromConnection(ctx, conn)
 
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
@@ -47,8 +65,25 @@ func (s *Server) handleStorageObjects(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(result)
 }
 
-// POST /storage/object/details - Get object metadata
+// POST /storage/{connection}/object/details - Get object metadata
 func (s *Server) handleStorageObjectDetails(w http.ResponseWriter, r *http.Request) {
+	connID := r.PathValue("connection")
+
+	conn, err := s.getConnection(connID)
+	if err != nil {
+		if os.IsNotExist(err) {
+			writeError(w, http.StatusNotFound, "connection not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	if conn.AmazonS3 == nil && conn.AzureBlob == nil {
+		writeError(w, http.StatusBadRequest, "connection is not a storage connection")
+		return
+	}
+
 	var req ObjectRequest
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -62,7 +97,7 @@ func (s *Server) handleStorageObjectDetails(w http.ResponseWriter, r *http.Reque
 	}
 
 	ctx := r.Context()
-	provider, err := newStorageProvider(ctx, req.StorageRequest)
+	provider, err := newStorageProviderFromConnection(ctx, conn)
 
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
@@ -80,8 +115,25 @@ func (s *Server) handleStorageObjectDetails(w http.ResponseWriter, r *http.Reque
 	json.NewEncoder(w).Encode(result)
 }
 
-// POST /storage/object/presign - Generate presigned URL
+// POST /storage/{connection}/object/presign - Generate presigned URL
 func (s *Server) handleStoragePresignedURL(w http.ResponseWriter, r *http.Request) {
+	connID := r.PathValue("connection")
+
+	conn, err := s.getConnection(connID)
+	if err != nil {
+		if os.IsNotExist(err) {
+			writeError(w, http.StatusNotFound, "connection not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	if conn.AmazonS3 == nil && conn.AzureBlob == nil {
+		writeError(w, http.StatusBadRequest, "connection is not a storage connection")
+		return
+	}
+
 	var req ObjectRequest
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -95,7 +147,7 @@ func (s *Server) handleStoragePresignedURL(w http.ResponseWriter, r *http.Reques
 	}
 
 	ctx := r.Context()
-	provider, err := newStorageProvider(ctx, req.StorageRequest)
+	provider, err := newStorageProviderFromConnection(ctx, conn)
 
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())

@@ -2,10 +2,10 @@ import { useQuery } from '@tanstack/react-query';
 import { useParams } from '@tanstack/react-router';
 import { Folder, ChevronRight, ChevronDown, Box, Plus } from 'lucide-react';
 import { listContainers, listObjects, getDisplayName } from '../lib/adapters/storage';
-import type { StorageConnection } from '../types';
+import type { Connection } from '../types';
 
 interface ObjectStorageBrowserProps {
-  connection: StorageConnection;
+  connection: Connection;
   expanded: Set<string>;
   onToggle: (key: string) => void;
   onSelectContainer: (container: string) => void;
@@ -29,7 +29,7 @@ export function ObjectStorageBrowser({
   // Fetch containers
   const { data: containers, isLoading: containersLoading } = useQuery({
     queryKey: ['storage-containers', connection.id],
-    queryFn: () => listContainers(connection),
+    queryFn: () => listContainers(connection.id),
     enabled: !!connection,
   });
 
@@ -37,7 +37,7 @@ export function ObjectStorageBrowser({
   const activeContainerExpanded = activeContainer ? expanded.has(`container:${connection.id}:${activeContainer}`) : false;
   const { data: rootObjects } = useQuery({
     queryKey: ['storage-objects', connection.id, activeContainer, ''],
-    queryFn: () => listObjects(connection, activeContainer!, { prefix: '', delimiter: '/' }),
+    queryFn: () => listObjects(connection.id, activeContainer!, { prefix: '', delimiter: '/' }),
     enabled: !!connection && !!activeContainer && activeContainerExpanded,
   });
 
@@ -123,7 +123,7 @@ export function ObjectStorageBrowser({
 
 // Recursive folder tree component
 interface FolderTreeProps {
-  connection: StorageConnection;
+  connection: Connection;
   container: string;
   prefixes: string[];
   activePath: string;
@@ -164,7 +164,7 @@ function FolderTree({
 }
 
 interface FolderItemProps {
-  connection: StorageConnection;
+  connection: Connection;
   container: string;
   prefix: string;
   activePath: string;
@@ -192,7 +192,7 @@ function FolderItem({
   // Fetch subfolders when expanded
   const { data: subObjects } = useQuery({
     queryKey: ['storage-objects', connection.id, container, prefix],
-    queryFn: () => listObjects(connection, container, { prefix, delimiter: '/' }),
+    queryFn: () => listObjects(connection.id, container, { prefix, delimiter: '/' }),
     enabled: isExpanded,
   });
 

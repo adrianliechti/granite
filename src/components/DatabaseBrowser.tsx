@@ -3,10 +3,10 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useParams } from '@tanstack/react-router';
 import { Plus, Database, Table } from 'lucide-react';
 import { listDatabases, listTables, createDatabase, supportsCreateDatabase } from '../lib/adapters';
-import type { DatabaseConnection } from '../types';
+import type { Connection } from '../types';
 
 interface DatabaseBrowserProps {
-  connection: DatabaseConnection;
+  connection: Connection;
   expanded: Set<string>;
   onToggle: (key: string) => void;
   onSelectDatabase: (database: string) => void;
@@ -34,17 +34,17 @@ export function DatabaseBrowser({
 
   const { data: databases } = useQuery({
     queryKey: ['databases', connection.id],
-    queryFn: () => listDatabases(connection.driver, connection.dsn),
-    enabled: !!connection,
+    queryFn: () => listDatabases(connection.id, connection.sql!.driver),
+    enabled: !!connection && !!connection.sql,
   });
 
   const { data: tables } = useQuery({
     queryKey: ['tables', connection.id, activeDatabase],
     queryFn: () =>
       activeDatabase
-        ? listTables(connection.driver, connection.dsn, activeDatabase)
+        ? listTables(connection.id, connection.sql!.driver, activeDatabase)
         : [],
-    enabled: !!connection && !!activeDatabase,
+    enabled: !!connection && !!connection.sql && !!activeDatabase,
   });
 
   const handleCreateDatabase = async () => {
@@ -54,7 +54,7 @@ export function DatabaseBrowser({
     setCreateDbError(null);
 
     try {
-      await createDatabase(connection.driver, connection.dsn, newDbName.trim());
+      await createDatabase(connection.id, connection.sql!.driver, newDbName.trim());
       await queryClient.invalidateQueries({ queryKey: ['databases', connection.id] });
       setCreateDbModal({ open: false });
       setNewDbName('');
@@ -174,7 +174,7 @@ export function DatabaseBrowser({
           </div>
         )}
         {/* Create Database Button */}
-        {supportsCreateDatabase(connection.driver) && (
+        {connection.sql && supportsCreateDatabase(connection.sql.driver) && (
           <button
             onClick={(e) => {
               e.stopPropagation();

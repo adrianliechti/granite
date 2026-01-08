@@ -12,7 +12,7 @@ import { useLiveQuery } from '@tanstack/react-db';
 import { connectionsCollection } from './lib/collections';
 import { listTables, listColumns, selectAllQuery, executeSQL, executeQuery, executeStatement, getSupportedTableViews, getTableViewQuery, type ColumnInfo, type TableView } from './lib/adapters';
 import type { SQLResponse } from './types';
-import { isDatabaseConnection, isStorageConnection } from './types';
+import { isSQLConnection, isStorageConnection } from './types';
 import { getConfig } from './config';
 
 const queryClient = new QueryClient();
@@ -36,23 +36,23 @@ function AppContent() {
   const activeConnection = (connections?.data ?? []).find((c) => c.id === connectionId);
 
   // Determine connection type  
-  const dbConnection = activeConnection && isDatabaseConnection(activeConnection) ? activeConnection : undefined;
+  const dbConnection = activeConnection && isSQLConnection(activeConnection) ? activeConnection : undefined;
   const storageConnection = activeConnection && isStorageConnection(activeConnection) ? activeConnection : undefined;
 
   // Fetch tables for autocomplete (only for database connections)
   const { data: tables } = useQuery({
     queryKey: ['tables', connectionId, database],
-    queryFn: () => dbConnection && database
-      ? listTables(dbConnection.driver, dbConnection.dsn, database)
+    queryFn: () => dbConnection && dbConnection.sql && database
+      ? listTables(dbConnection.id, dbConnection.sql.driver, database)
       : [],
-    enabled: !!dbConnection && !!database,
+    enabled: !!dbConnection && !!dbConnection.sql && !!database,
   });
 
   // Fetch columns for each table for autocomplete
   const { data: columnsMap } = useQuery({
     queryKey: ['columns', connectionId, database, tables],
     queryFn: async () => {
-      if (!dbConnection || !database || !tables?.length) return {};
+      if (!dbConnection || !dbConnection.sql || !database || !tables?.length) return {};
 
       const results: Record<string, ColumnInfo[]> = {};
       // Fetch columns for all tables (limit to avoid too many requests)
@@ -61,7 +61,7 @@ function AppContent() {
       await Promise.all(
         tablesToFetch.map(async (t) => {
           try {
-            results[t] = await listColumns(dbConnection.driver, dbConnection.dsn, t);
+            results[t] = await listColumns(dbConnection.id, dbConnection.sql!.driver, t);
           } catch {
             results[t] = [];
           }
@@ -70,7 +70,7 @@ function AppContent() {
 
       return results;
     },
-    enabled: !!dbConnection && !!database && !!tables?.length,
+    enabled: !!dbConnection && !!dbConnection.sql && !!database && !!tables?.length,
     staleTime: 5 * 60 * 1000, // Cache for 5 minutes
   });
 
@@ -91,9 +91,9 @@ function AppContent() {
 
   // Get supported tabs for the current driver
   const supportedTabs = useMemo(() => {
-    if (!dbConnection) return ['records', 'columns'] as TableView[];
-    return getSupportedTableViews(dbConnection.driver);
-  }, [dbConnection]);
+    if (!dbConnection?.sql) return ['records', 'columns'] as TableView[];
+    return getSupportedTableViews(dbConnection.sql.driver);
+  }, [dbConnection?.sql]);
 
   // Clear active view when editor is expanded
   const handleExpandEditor = useCallback(() => {
@@ -114,12 +114,11 @@ function AppContent() {
 
   const mutation = useMutation({
     mutationFn: async (sql: string) => {
-      if (!dbConnection) throw new Error('No database connection selected');
+      if (!dbConnection?.sql) throw new Error('No database connection selected');
       const start = performance.now();
 
       const response = await executeSQL(
-        dbConnection.driver,
-        dbConnection.dsn,
+        dbConnection.id,
         sql
       );
 
@@ -139,8 +138,8 @@ function AppContent() {
 
   // Auto-load table data when table param changes
   useEffect(() => {
-    if (dbConnection && table) {
-      const query = selectAllQuery(table, dbConnection.driver);
+    if (dbConnection?.sql && table) {
+      const query = selectAllQuery(table, dbConnection.sql.driver);
       setSql(query);
       mutation.mutate(query);
       setActiveView('records');
@@ -151,7 +150,7 @@ function AppContent() {
       setActiveView(null);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dbConnection?.id, table, container]);
+  }, [dbConnection?.id, dbConnection?.sql, table, container]);
 
   // Execute query and update UI, returns the response
   const handleExecute = useCallback(async (sql: string): Promise<SQLResponse> => {
@@ -173,8 +172,8 @@ function AppContent() {
 
   // Handle view selection - fill and execute the appropriate query
   const handleViewSelect = useCallback((view: TableView) => {
-    if (!dbConnection || !table) return;
-    const query = getTableViewQuery(dbConnection.driver, table, view);
+    if (!dbConnection?.sql || !table) return;
+    const query = getTableViewQuery(dbConnection.sql.driver, table, view);
     if (query) {
       setSql(query);
       mutation.mutate(query);
@@ -209,7 +208,7 @@ function AppContent() {
     const sql = `UPDATE ${table} SET ${columnId} = ${formatSqlValue(newValue)} WHERE ${pkColumn} = ${formatSqlValue(pkValue)}`;
 
     try {
-      await executeStatement(dbConnection.driver, dbConnection.dsn, sql);
+      await executeStatement(dbConnection.id, sql);
     } catch (error) {
       console.error('Update failed:', error);
     }
@@ -217,7 +216,7 @@ function AppContent() {
 
   // Handle row delete - generates and executes DELETE SQL
   const handleDeleteRow = useCallback(async (row: Record<string, unknown>) => {
-    if (!dbConnection || !table) return;
+    if (!dbConnection?.sql || !table) return;
 
     const pkColumn = queryResult?.response?.columns?.[0] ?? 'id';
     const pkValue = row[pkColumn];
@@ -230,9 +229,9 @@ function AppContent() {
     const sql = `DELETE FROM ${table} WHERE ${pkColumn} = ${formatSqlValue(pkValue)}`;
 
     try {
-      await executeStatement(dbConnection.driver, dbConnection.dsn, sql);
+      await executeStatement(dbConnection.id, sql);
       // Refresh the table data
-      mutation.mutate(selectAllQuery(table, dbConnection.driver));
+      mutation.mutate(selectAllQuery(table, dbConnection.sql.driver));
     } catch (error) {
       console.error('Delete failed:', error);
     }
@@ -244,11 +243,11 @@ function AppContent() {
     executeQuery: handleExecute,
     runQuerySilent: async (sql: string) => {
       if (!dbConnection) throw new Error('No database connection selected');
-      return executeQuery(dbConnection.driver, dbConnection.dsn, sql);
+      return executeQuery(dbConnection.id, sql);
     },
     runStatementSilent: async (sql: string) => {
       if (!dbConnection) throw new Error('No database connection selected');
-      return executeStatement(dbConnection.driver, dbConnection.dsn, sql);
+      return executeStatement(dbConnection.id, sql);
     },
   }), [handleExecute, dbConnection]);
 

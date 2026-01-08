@@ -8,19 +8,8 @@ export type DatabaseDriver = 'postgres' | 'mysql' | 'sqlite' | 'sqlserver' | 'or
 // Storage provider types
 export type StorageProvider = 's3' | 'azure-blob';
 
-// Connection type discriminator
-export type ConnectionType = 'database' | 'storage';
-
-// Base connection interface
-interface BaseConnection {
-  id: string;
-  name: string;
-  createdAt: string;
-}
-
-// Database connection configuration
-export interface DatabaseConnection extends BaseConnection {
-  type: 'database';
+// SQL connection configuration
+export interface SQLConfig {
   driver: DatabaseDriver;
   dsn: string;
 }
@@ -31,7 +20,6 @@ export interface S3Config {
   region: string;
   accessKeyId: string;
   secretAccessKey: string;
-  container?: string; // Optional default container
 }
 
 // Azure Blob storage configuration
@@ -40,34 +28,43 @@ export interface AzureBlobConfig {
   accountKey?: string;
   sasToken?: string;
   connectionString?: string;
-  container?: string; // Optional default container
 }
 
-// Storage connection configuration
-export interface StorageConnection extends BaseConnection {
-  type: 'storage';
-  provider: StorageProvider;
-  config: S3Config | AzureBlobConfig;
+// Unified connection type
+export interface Connection {
+  id: string;
+  name: string;
+  
+  // SQL connection (mutually exclusive with storage)
+  sql?: SQLConfig;
+  
+  // Storage connections (mutually exclusive with sql)
+  amazonS3?: S3Config;
+  azureBlob?: AzureBlobConfig;
+  
+  createdAt?: string;
+  updatedAt?: string;
 }
 
-// Union type for all connections
-export type Connection = DatabaseConnection | StorageConnection;
+// Type aliases for backward compatibility
+export type DatabaseConnection = Connection;
+export type StorageConnection = Connection;
 
 // Type guards
-export function isDatabaseConnection(conn: Connection): conn is DatabaseConnection {
-  return conn.type === 'database';
+export function isSQLConnection(conn: Connection): boolean {
+  return conn.sql != null;
 }
 
-export function isStorageConnection(conn: Connection): conn is StorageConnection {
-  return conn.type === 'storage';
+export function isStorageConnection(conn: Connection): boolean {
+  return conn.amazonS3 != null || conn.azureBlob != null;
 }
 
-export function isS3Connection(conn: StorageConnection): conn is StorageConnection & { config: S3Config } {
-  return conn.provider === 's3';
+export function isS3Connection(conn: Connection): boolean {
+  return conn.amazonS3 != null;
 }
 
-export function isAzureBlobConnection(conn: StorageConnection): conn is StorageConnection & { config: AzureBlobConfig } {
-  return conn.provider === 'azure-blob';
+export function isAzureBlobConnection(conn: Connection): boolean {
+  return conn.azureBlob != null;
 }
 
 // ============================================================================
@@ -125,8 +122,6 @@ export interface SavedQuery {
 
 // SQL request to backend
 export interface SQLRequest {
-  driver: string;
-  dsn: string;
   query: string;
   params?: unknown[];
 }

@@ -35,10 +35,10 @@ import {
 } from '../lib/adapters/storage';
 import { ObjectDetail } from './ObjectDetail';
 import { UploadModal } from './UploadModal';
-import type { StorageConnection } from '../types';
+import type { Connection } from '../types';
 
 interface ObjectStorageViewProps {
-  connection: StorageConnection;
+  connection: Connection;
   container: string;
   path: string;
   onNavigate: (container: string, path: string) => void;
@@ -64,13 +64,13 @@ export function ObjectStorageView({ connection, container, path, onNavigate }: O
   // Fetch objects for current path
   const { data: objects, isLoading, error } = useQuery({
     queryKey: ['storage-objects', connection.id, container, normalizedPath],
-    queryFn: () => listObjects(connection, container, { prefix: normalizedPath, delimiter: '/' }),
+    queryFn: () => listObjects(connection.id, container, { prefix: normalizedPath, delimiter: '/' }),
     enabled: !!connection && !!container,
   });
 
   // Delete mutation for files
   const deleteFileMutation = useMutation({
-    mutationFn: (key: string) => deleteObjects(connection, container, [key]),
+    mutationFn: (key: string) => deleteObjects(connection.id, container, [key]),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['storage-objects', connection.id, container] });
       setSelectedObject(null);
@@ -79,7 +79,7 @@ export function ObjectStorageView({ connection, container, path, onNavigate }: O
 
   // Delete mutation for folders (prefixes)
   const deleteFolderMutation = useMutation({
-    mutationFn: (prefix: string) => deletePrefix(connection, container, prefix),
+    mutationFn: (prefix: string) => deletePrefix(connection.id, container, prefix),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['storage-objects', connection.id, container] });
     },
@@ -170,7 +170,7 @@ export function ObjectStorageView({ connection, container, path, onNavigate }: O
     return segments;
   }, [container, path]);
 
-  const providerLabel = connection.provider === 's3' ? 'S3' : 'Azure Blob';
+  const providerLabel = connection.amazonS3 ? 'S3' : 'Azure Blob';
 
   return (
     <div className="flex-1 flex gap-2 min-h-0">

@@ -17,10 +17,10 @@ import {
   getContentTypeLabel,
   getDisplayName
 } from '../lib/adapters/storage';
-import type { StorageConnection } from '../types';
+import type { Connection } from '../types';
 
 interface ObjectDetailProps {
-  connection: StorageConnection;
+  connection: Connection;
   container: string;
   objectKey: string;
   onDeleted?: () => void;
@@ -40,13 +40,13 @@ export function ObjectDetail({ connection, container, objectKey, onClose }: Obje
   
   const { data: details, isLoading, error } = useQuery({
     queryKey: ['storage-object-details', connection.id, container, objectKey],
-    queryFn: () => getObjectDetails(connection, container, objectKey),
+    queryFn: () => getObjectDetails(connection.id, container, objectKey),
     enabled: !!connection && !!container && !!objectKey,
   });
 
   const handleDownload = async () => {
     try {
-      const url = await getPresignedUrl(connection, container, objectKey);
+      const url = await getPresignedUrl(connection.id, container, objectKey);
       // Create a temporary anchor element to trigger download
       const link = document.createElement('a');
       link.href = url;

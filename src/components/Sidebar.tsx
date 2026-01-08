@@ -7,8 +7,8 @@ import { ConnectionModal } from './ConnectionModal';
 import { CreateContainerModal } from './CreateContainerModal';
 import { DatabaseBrowser } from './DatabaseBrowser';
 import { ObjectStorageBrowser } from './ObjectStorageBrowser';
-import type { Connection, DatabaseConnection, StorageConnection } from '../types';
-import { isDatabaseConnection, isStorageConnection } from '../types';
+import type { Connection } from '../types';
+import { isSQLConnection, isStorageConnection } from '../types';
 
 interface SidebarProps {
   showAddModal?: boolean;
@@ -65,7 +65,7 @@ export function Sidebar({
   );
 
   const [modalState, setModalState] = useState<{ open: boolean; connection?: Connection | null }>({ open: false });
-  const [createContainerFor, setCreateContainerFor] = useState<StorageConnection | null>(null);
+  const [createContainerFor, setCreateContainerFor] = useState<Connection | null>(null);
   const [manualExpanded, setManualExpanded] = useState<Set<string>>(new Set());
   
   // Compute items that should be auto-expanded based on route params
@@ -156,9 +156,8 @@ export function Sidebar({
 
   // Get connection label based on type
   const getConnectionLabel = (conn: Connection): string => {
-    if (isDatabaseConnection(conn)) {
-      const dbConn = conn as DatabaseConnection;
-      switch (dbConn.driver) {
+    if (isSQLConnection(conn) && conn.sql) {
+      switch (conn.sql.driver) {
         case 'postgres': return 'PG';
         case 'mysql': return 'MY';
         case 'sqlserver': return 'MS';
@@ -166,21 +165,24 @@ export function Sidebar({
         case 'sqlite': return 'SQ';
         default: return 'DB';
       }
-    } else {
-      const storageConn = conn as StorageConnection;
-      return storageConn.provider === 's3' ? 'S3' : 'AZ';
+    } else if (conn.amazonS3) {
+      return 'S3';
+    } else if (conn.azureBlob) {
+      return 'AZ';
     }
+    return '??';
   };
 
   // Get color class for connection type
   const getConnectionColor = (conn: Connection): string => {
-    if (isDatabaseConnection(conn)) {
-      const dbConn = conn as DatabaseConnection;
-      return driverColors[dbConn.driver] || 'text-neutral-500';
-    } else {
-      const storageConn = conn as StorageConnection;
-      return driverColors[storageConn.provider] || 'text-neutral-500';
+    if (isSQLConnection(conn) && conn.sql) {
+      return driverColors[conn.sql.driver] || 'text-neutral-500';
+    } else if (conn.amazonS3) {
+      return driverColors['s3'] || 'text-neutral-500';
+    } else if (conn.azureBlob) {
+      return driverColors['azure-blob'] || 'text-neutral-500';
     }
+    return 'text-neutral-500';
   };
 
   return (
@@ -230,7 +232,7 @@ export function Sidebar({
             <div className="space-y-0.5 pb-2">
               {(connections?.data ?? []).map((conn) => {
                       const isExpanded = expanded.has(conn.id);
-                      const isDatabase = isDatabaseConnection(conn);
+                      const isDatabase = isSQLConnection(conn);
                       const isStorage = isStorageConnection(conn);
 
                       return (
@@ -282,7 +284,7 @@ export function Sidebar({
                           {isExpanded && isDatabase && (
                             <div className="ml-4">
                               <DatabaseBrowser
-                                connection={conn as DatabaseConnection}
+                                connection={conn}
                                 expanded={expanded}
                                 onToggle={toggle}
                                 onSelectDatabase={(db) => onSelectDatabase(conn.id, db)}
@@ -295,12 +297,12 @@ export function Sidebar({
                           {isExpanded && isStorage && (
                             <div className="ml-4">
                               <ObjectStorageBrowser
-                                connection={conn as StorageConnection}
+                                connection={conn}
                                 expanded={expanded}
                                 onToggle={toggle}
                                 onSelectContainer={(container) => onSelectContainer(conn.id, container)}
                                 onSelectPath={(container, path) => onSelectPath(conn.id, container, path)}
-                                onCreateContainer={() => setCreateContainerFor(conn as StorageConnection)}
+                                onCreateContainer={() => setCreateContainerFor(conn)}
                               />
                             </div>
                           )}

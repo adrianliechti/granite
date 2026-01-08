@@ -2,8 +2,6 @@ import { useState } from 'react';
 import { X, Loader2, CheckCircle2, XCircle, Plug, Database, Cloud } from 'lucide-react';
 import type { 
   Connection, 
-  DatabaseConnection, 
-  StorageConnection, 
   DatabaseDriver, 
   StorageProvider,
   S3Config,
@@ -12,7 +10,7 @@ import type {
 
 interface ConnectionModalProps {
   connection?: Connection | null;
-  onSave: (conn: Omit<Connection, 'id' | 'createdAt'>) => void;
+  onSave: (conn: Omit<Connection, 'id' | 'updated'> & { id?: string }) => void;
   onClose: () => void;
 }
 
@@ -76,64 +74,43 @@ const storageProviderInfo: Record<StorageProvider, { label: string; color: strin
   },
 };
 
+// Helper to determine initial category
+function getInitialCategory(connection?: Connection | null): ConnectionCategory {
+  if (!connection) return 'database';
+  if (connection.amazonS3 || connection.azureBlob) return 'storage';
+  return 'database';
+}
+
 export function ConnectionModal({ connection, onSave, onClose }: ConnectionModalProps) {
   // Determine initial category from existing connection
-  const initialCategory: ConnectionCategory = connection?.type === 'storage' ? 'storage' : 'database';
+  const initialCategory = getInitialCategory(connection);
   
   const [category, setCategory] = useState<ConnectionCategory>(initialCategory);
   const [name, setName] = useState(connection?.name ?? '');
   
   // Database state
   const [driver, setDriver] = useState<DatabaseDriver>(
-    connection?.type === 'database' ? connection.driver : 'postgres'
+    connection?.sql?.driver ?? 'postgres'
   );
   const [dsn, setDsn] = useState(
-    connection?.type === 'database' ? connection.dsn : ''
+    connection?.sql?.dsn ?? ''
   );
   
   // Storage state
   const [storageProvider, setStorageProvider] = useState<StorageProvider>(
-    connection?.type === 'storage' ? connection.provider : 's3'
+    connection?.amazonS3 ? 's3' : connection?.azureBlob ? 'azure-blob' : 's3'
   );
   
   // S3 config
-  const [s3Region, setS3Region] = useState(
-    connection?.type === 'storage' && connection.provider === 's3' 
-      ? (connection.config as S3Config).region 
-      : 'us-east-1'
-  );
-  const [s3AccessKeyId, setS3AccessKeyId] = useState(
-    connection?.type === 'storage' && connection.provider === 's3'
-      ? (connection.config as S3Config).accessKeyId
-      : ''
-  );
-  const [s3SecretAccessKey, setS3SecretAccessKey] = useState(
-    connection?.type === 'storage' && connection.provider === 's3'
-      ? (connection.config as S3Config).secretAccessKey
-      : ''
-  );
-  const [s3Endpoint, setS3Endpoint] = useState(
-    connection?.type === 'storage' && connection.provider === 's3'
-      ? (connection.config as S3Config).endpoint ?? ''
-      : ''
-  );
+  const [s3Region, setS3Region] = useState(connection?.amazonS3?.region ?? 'us-east-1');
+  const [s3AccessKeyId, setS3AccessKeyId] = useState(connection?.amazonS3?.accessKeyId ?? '');
+  const [s3SecretAccessKey, setS3SecretAccessKey] = useState(connection?.amazonS3?.secretAccessKey ?? '');
+  const [s3Endpoint, setS3Endpoint] = useState(connection?.amazonS3?.endpoint ?? '');
   
   // Azure config
-  const [azureAccountName, setAzureAccountName] = useState(
-    connection?.type === 'storage' && connection.provider === 'azure-blob'
-      ? (connection.config as AzureBlobConfig).accountName
-      : ''
-  );
-  const [azureAccountKey, setAzureAccountKey] = useState(
-    connection?.type === 'storage' && connection.provider === 'azure-blob'
-      ? (connection.config as AzureBlobConfig).accountKey ?? ''
-      : ''
-  );
-  const [azureConnectionString, setAzureConnectionString] = useState(
-    connection?.type === 'storage' && connection.provider === 'azure-blob'
-      ? (connection.config as AzureBlobConfig).connectionString ?? ''
-      : ''
-  );
+  const [azureAccountName, setAzureAccountName] = useState(connection?.azureBlob?.accountName ?? '');
+  const [azureAccountKey, setAzureAccountKey] = useState(connection?.azureBlob?.accountKey ?? '');
+  const [azureConnectionString, setAzureConnectionString] = useState(connection?.azureBlob?.connectionString ?? '');
 
   const [testStatus, setTestStatus] = useState<'idle' | 'testing' | 'success' | 'error'>('idle');
   const [testError, setTestError] = useState<string | null>(null);
@@ -147,35 +124,96 @@ export function ConnectionModal({ connection, onSave, onClose }: ConnectionModal
     try {
       if (category === 'database') {
         if (!dsn) return;
-        const response = await fetch('/sql/query', {
+        
+        // For testing, we need to create a temporary connection
+        // Since we can't test without a saved connection, we'll save temporarily
+        const tempId = `__test_${Date.now()}`;
+        
+        // Create temp connection
+        const createRes = await fetch('/connections', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ driver, dsn, query: 'SELECT 1', params: [] }),
+          body: JSON.stringify({ 
+            id: tempId, 
+            name: 'Test Connection',
+            sql: { driver, dsn } 
+          }),
         });
         
-        const data = await response.json();
-        
-        if (data.error) {
+        if (!createRes.ok) {
+          const data = await createRes.json();
           setTestStatus('error');
-          setTestError(data.error);
-        } else {
-          setTestStatus('success');
+          setTestError(data.message || 'Failed to create test connection');
+          return;
+        }
+        
+        try {
+          // Test the connection
+          const response = await fetch(`/sql/${encodeURIComponent(tempId)}/query`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ query: 'SELECT 1', params: [] }),
+          });
+          
+          const data = await response.json();
+          
+          if (data.error || !response.ok) {
+            setTestStatus('error');
+            setTestError(data.error || data.message || 'Connection failed');
+          } else {
+            setTestStatus('success');
+          }
+        } finally {
+          // Clean up temp connection
+          await fetch(`/connections/${encodeURIComponent(tempId)}`, { method: 'DELETE' });
         }
       } else {
         // Test storage connection
+        const tempId = `__test_${Date.now()}`;
         const config = buildStorageConfig();
-        const response = await fetch('/storage/containers', {
+        
+        // Create temp connection
+        const connData: Record<string, unknown> = { 
+          id: tempId, 
+          name: 'Test Connection',
+        };
+        
+        if (storageProvider === 's3') {
+          connData.amazonS3 = config;
+        } else {
+          connData.azureBlob = config;
+        }
+        
+        const createRes = await fetch('/connections', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ provider: storageProvider, config }),
+          body: JSON.stringify(connData),
         });
         
-        if (!response.ok) {
-          const data = await response.json();
+        if (!createRes.ok) {
+          const data = await createRes.json();
           setTestStatus('error');
-          setTestError(data.message || 'Connection failed');
-        } else {
-          setTestStatus('success');
+          setTestError(data.message || 'Failed to create test connection');
+          return;
+        }
+        
+        try {
+          const response = await fetch(`/storage/${encodeURIComponent(tempId)}/containers`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({}),
+          });
+          
+          if (!response.ok) {
+            const data = await response.json();
+            setTestStatus('error');
+            setTestError(data.message || 'Connection failed');
+          } else {
+            setTestStatus('success');
+          }
+        } finally {
+          // Clean up temp connection
+          await fetch(`/connections/${encodeURIComponent(tempId)}`, { method: 'DELETE' });
         }
       }
     } catch (err) {
@@ -209,19 +247,25 @@ export function ConnectionModal({ connection, onSave, onClose }: ConnectionModal
     if (category === 'database') {
       if (!dsn) return;
       onSave({ 
-        type: 'database',
+        ...(connection?.id && { id: connection.id }),
         name, 
-        driver, 
-        dsn 
-      } as Omit<DatabaseConnection, 'id' | 'createdAt'>);
+        sql: { driver, dsn },
+      });
     } else {
       const config = buildStorageConfig();
-      onSave({
-        type: 'storage',
-        name,
-        provider: storageProvider,
-        config,
-      } as Omit<StorageConnection, 'id' | 'createdAt'>);
+      if (storageProvider === 's3') {
+        onSave({
+          ...(connection?.id && { id: connection.id }),
+          name,
+          amazonS3: config as S3Config,
+        });
+      } else {
+        onSave({
+          ...(connection?.id && { id: connection.id }),
+          name,
+          azureBlob: config as AzureBlobConfig,
+        });
+      }
     }
   };
 

@@ -20,6 +20,49 @@ export const collectionsQueryClient = new QueryClient({
 // Server API helpers
 // ============================================================================
 
+async function fetchAllConnections(): Promise<Connection[]> {
+  const response = await fetch('/connections');
+  if (!response.ok) {
+    throw new Error(`Failed to list connections: ${response.statusText}`);
+  }
+  return response.json();
+}
+
+async function saveConnection(connection: Connection): Promise<void> {
+  const exists = await fetch(`/connections/${encodeURIComponent(connection.id)}`).then(r => r.ok);
+  
+  if (exists) {
+    // Update existing
+    const response = await fetch(`/connections/${encodeURIComponent(connection.id)}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(connection),
+    });
+    if (!response.ok) {
+      throw new Error(`Failed to update connection: ${response.statusText}`);
+    }
+  } else {
+    // Create new
+    const response = await fetch('/connections', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(connection),
+    });
+    if (!response.ok) {
+      throw new Error(`Failed to create connection: ${response.statusText}`);
+    }
+  }
+}
+
+async function deleteConnection(id: string): Promise<void> {
+  const response = await fetch(`/connections/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+  });
+  if (!response.ok && response.status !== 404) {
+    throw new Error(`Failed to delete connection: ${response.statusText}`);
+  }
+}
+
 async function fetchAllFromStore<T extends { id: string }>(storeName: string): Promise<T[]> {
   const response = await fetch(`/data/${storeName}`);
   if (!response.ok) {
@@ -64,13 +107,11 @@ async function deleteFromServer(storeName: string, id: string): Promise<void> {
 // Connections collection - persisted to server
 // ============================================================================
 
-const CONNECTIONS_STORE = 'connections';
-
 export const connectionsCollection = createCollection(
   queryCollectionOptions({
     queryKey: ['connections'],
     queryFn: async (): Promise<Connection[]> => {
-      return fetchAllFromStore<Connection>(CONNECTIONS_STORE);
+      return fetchAllConnections();
     },
     getKey: (item: Connection) => item.id,
     queryClient: collectionsQueryClient,
@@ -79,7 +120,7 @@ export const connectionsCollection = createCollection(
       await Promise.all(
         transaction.mutations.map(async (mutation) => {
           const connection = mutation.modified as Connection;
-          await saveToServer(CONNECTIONS_STORE, connection);
+          await saveConnection(connection);
         })
       );
     },
@@ -88,7 +129,7 @@ export const connectionsCollection = createCollection(
       await Promise.all(
         transaction.mutations.map(async (mutation) => {
           const connection = mutation.modified as Connection;
-          await saveToServer(CONNECTIONS_STORE, connection);
+          await saveConnection(connection);
         })
       );
     },
@@ -97,7 +138,7 @@ export const connectionsCollection = createCollection(
       await Promise.all(
         transaction.mutations.map(async (mutation) => {
           const original = mutation.original as Connection;
-          await deleteFromServer(CONNECTIONS_STORE, original.id);
+          await deleteConnection(original.id);
         })
       );
     },

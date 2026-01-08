@@ -3,17 +3,34 @@ package server
 import (
 	"encoding/json"
 	"net/http"
+	"os"
 )
 
 // DeleteObjectRequest contains parameters for deleting objects
 type DeleteObjectRequest struct {
-	StorageRequest
 	Container string   `json:"container"`
 	Keys      []string `json:"keys"` // One or more object keys to delete
 }
 
-// POST /storage/object/delete - Delete one or more objects from storage
+// POST /storage/{connection}/object/delete - Delete one or more objects from storage
 func (s *Server) handleStorageDeleteObject(w http.ResponseWriter, r *http.Request) {
+	connID := r.PathValue("connection")
+
+	conn, err := s.getConnection(connID)
+	if err != nil {
+		if os.IsNotExist(err) {
+			writeError(w, http.StatusNotFound, "connection not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	if conn.AmazonS3 == nil && conn.AzureBlob == nil {
+		writeError(w, http.StatusBadRequest, "connection is not a storage connection")
+		return
+	}
+
 	var req DeleteObjectRequest
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -32,7 +49,7 @@ func (s *Server) handleStorageDeleteObject(w http.ResponseWriter, r *http.Reques
 	}
 
 	ctx := r.Context()
-	provider, err := newStorageProvider(ctx, req.StorageRequest)
+	provider, err := newStorageProviderFromConnection(ctx, conn)
 
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())

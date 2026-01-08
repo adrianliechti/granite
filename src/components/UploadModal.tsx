@@ -2,10 +2,10 @@ import { useState, useRef } from 'react';
 import { X, Loader2, Upload, FileUp, File } from 'lucide-react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { uploadObject } from '../lib/adapters/storage';
-import type { StorageConnection } from '../types';
+import type { Connection } from '../types';
 
 interface UploadModalProps {
-  connection: StorageConnection;
+  connection: Connection;
   container: string;
   currentPath: string;
   onClose: () => void;
@@ -19,7 +19,7 @@ export function UploadModal({ connection, container, currentPath, onClose }: Upl
 
   const uploadMutation = useMutation({
     mutationFn: ({ file, key }: { file: File; key: string }) =>
-      uploadObject(connection, container, key, file),
+      uploadObject(connection.id, container, key, file),
     onSuccess: () => {
       queryClient.invalidateQueries({
         queryKey: ['storage-objects', connection.id, container],

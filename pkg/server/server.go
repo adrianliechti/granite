@@ -34,25 +34,26 @@ func New(cfg *config.Config) (*Server, error) {
 		Handler: mux,
 	}
 
-	// Data endpoints
-	mux.HandleFunc("GET /data/{store}", s.handleDataList)
-	mux.HandleFunc("GET /data/{store}/{id}", s.handleDataGet)
-	mux.HandleFunc("PUT /data/{store}/{id}", s.handleDataPut)
-	mux.HandleFunc("DELETE /data/{store}/{id}", s.handleDataDelete)
+	// Connection endpoints
+	mux.HandleFunc("GET /connections", s.handleConnectionList)
+	mux.HandleFunc("POST /connections", s.handleConnectionCreate)
+	mux.HandleFunc("GET /connections/{id}", s.handleConnectionGet)
+	mux.HandleFunc("PUT /connections/{id}", s.handleConnectionUpdate)
+	mux.HandleFunc("DELETE /connections/{id}", s.handleConnectionDelete)
 
 	// SQL endpoints
-	mux.HandleFunc("POST /sql/query", s.handleQuery)
-	mux.HandleFunc("POST /sql/execute", s.handleExecute)
+	mux.HandleFunc("POST /sql/{connection}/query", s.handleQuery)
+	mux.HandleFunc("POST /sql/{connection}/execute", s.handleExecute)
 
 	// Storage endpoints
-	mux.HandleFunc("POST /storage/containers", s.handleStorageContainers)
-	mux.HandleFunc("POST /storage/containers/create", s.handleStorageCreateContainer)
+	mux.HandleFunc("POST /storage/{connection}/containers", s.handleStorageContainers)
+	mux.HandleFunc("POST /storage/{connection}/containers/create", s.handleStorageCreateContainer)
 
-	mux.HandleFunc("POST /storage/objects", s.handleStorageObjects)
-	mux.HandleFunc("POST /storage/object/details", s.handleStorageObjectDetails)
-	mux.HandleFunc("POST /storage/object/presign", s.handleStoragePresignedURL)
-	mux.HandleFunc("POST /storage/object/delete", s.handleStorageDeleteObject)
-	mux.HandleFunc("POST /storage/upload", s.handleStorageUploadObject)
+	mux.HandleFunc("POST /storage/{connection}/objects", s.handleStorageObjects)
+	mux.HandleFunc("POST /storage/{connection}/object/details", s.handleStorageObjectDetails)
+	mux.HandleFunc("POST /storage/{connection}/object/presign", s.handleStoragePresignedURL)
+	mux.HandleFunc("POST /storage/{connection}/object/delete", s.handleStorageDeleteObject)
+	mux.HandleFunc("POST /storage/{connection}/upload", s.handleStorageUploadObject)
 
 	if cfg.OpenAI != nil {
 		target, err := url.Parse(cfg.OpenAI.URL)
