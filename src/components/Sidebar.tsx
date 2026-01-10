@@ -130,12 +130,13 @@ export function Sidebar({
     });
   };
 
-  const saveConnection = (conn: Omit<Connection, 'id' | 'createdAt'>) => {
+  const saveConnection = async (conn: Omit<Connection, 'id' | 'createdAt'>): Promise<Connection> => {
     if (modalState.connection) {
       // Edit existing connection - update all fields
       connectionsCollection.update(modalState.connection.id, (draft: Connection) => {
         Object.assign(draft, conn);
       });
+      return { ...modalState.connection, ...conn };
     } else {
       // Add new connection
       const id = crypto.randomUUID();
@@ -143,11 +144,11 @@ export function Sidebar({
       connectionsCollection.insert(newConn);
       onSelectConnection(id);
       setManualExpanded((prev) => new Set(prev).add(id));
+      return newConn;
     }
-    setModalState({ open: false });
   };
 
-  const deleteConnection = (id: string) => {
+  const deleteConnection = async (id: string): Promise<void> => {
     connectionsCollection.delete(id);
     if (params.connectionId === id) {
       onSelectConnection(null);
