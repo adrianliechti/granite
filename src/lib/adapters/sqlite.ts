@@ -25,18 +25,13 @@ export const sqliteAdapter: DatabaseAdapter = {
     return `SELECT * FROM ${table} LIMIT ${limit}`;
   },
 
-  createDatabaseQuery(_name: string) {
+  createDatabaseQuery() {
     // SQLite doesn't support creating databases - it's file-based
     return null;
   },
 
   listIndexesQuery(table: string) {
     return `PRAGMA index_list(${table})`;
-  },
-
-  modifyDsnForDatabase(dsn: string, _database: string) {
-    // SQLite doesn't need DSN modification - it's file-based
-    return dsn;
   },
 
   parseDatabaseNames(rows) {

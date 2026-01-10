@@ -1,27 +1,16 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { Plus, Trash2, Pencil, Database, Package } from 'lucide-react';
+import { useParams, useNavigate } from '@tanstack/react-router';
 import { useLiveQuery } from '@tanstack/react-db';
 import { connectionsCollection } from '../lib/collections';
 import { ConnectionModal } from './ConnectionModal';
 import { CreateContainerModal } from './CreateContainerModal';
 import { DatabaseBrowser } from './DatabaseBrowser';
 import { ObjectStorageBrowser } from './ObjectStorageBrowser';
-import type { Connection, DatabaseConnection, StorageConnection } from '../types';
-import { isDatabaseConnection, isStorageConnection } from '../types';
+import type { Connection } from '../types';
+import { isSQLConnection, isStorageConnection } from '../types';
 
 interface SidebarProps {
-  activeConnectionId: string | null;
-  activeDatabase: string | null;
-  activeTable: string | null;
-  // Storage-specific
-  activeContainer: string | null;
-  activePath: string;
-  onSelectConnection: (connectionId: string | null) => void;
-  onSelectDatabase: (database: string) => void;
-  onSelectTable: (table: string) => void;
-  // Storage-specific
-  onSelectContainer: (container: string) => void;
-  onSelectPath: (container: string, path: string) => void;
   showAddModal?: boolean;
   onAddModalClose?: () => void;
 }
@@ -38,32 +27,102 @@ const driverColors: Record<string, string> = {
 };
 
 export function Sidebar({
-  activeConnectionId,
-  activeDatabase,
-  activeTable,
-  activeContainer,
-  activePath,
-  onSelectConnection,
-  onSelectDatabase,
-  onSelectTable,
-  onSelectContainer,
-  onSelectPath,
   showAddModal = false,
   onAddModalClose,
 }: SidebarProps) {
+  // Get route params from URL
+  const params = useParams({ strict: false });
+  const navigate = useNavigate();
+
+  // Navigation handlers
+  const onSelectConnection = (connId: string | null) => {
+    if (!connId) {
+      navigate({ to: '/' });
+    } else {
+      navigate({ to: `/${connId}` });
+    }
+  };
+
+  const onSelectDatabase = (connId: string, db: string) => {
+    navigate({ to: `/${connId}/${db}` });
+  };
+
+  const onSelectTable = (connId: string, db: string, tbl: string) => {
+    navigate({ to: `/${connId}/${db}/${tbl}` });
+  };
+
+  const onSelectContainer = (connId: string, cont: string) => {
+    navigate({ to: `/${connId}/container/${cont}` });
+  };
+
+  const onSelectPath = (connId: string, cont: string, path: string) => {
+    const normalizedPath = path.replace(/^\/+/, '');
+    navigate({ to: `/${connId}/container/${cont}/${normalizedPath}` });
+  };
+
   const connections = useLiveQuery((q) =>
     q.from({ conn: connectionsCollection }).orderBy(({ conn }) => conn.createdAt, 'desc')
   );
 
   const [modalState, setModalState] = useState<{ open: boolean; connection?: Connection | null }>({ open: false });
-  const [createContainerFor, setCreateContainerFor] = useState<StorageConnection | null>(null);
-  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [createContainerFor, setCreateContainerFor] = useState<Connection | null>(null);
+  const [manualExpanded, setManualExpanded] = useState<Set<string>>(new Set());
+  
+  // Compute items that should be auto-expanded based on route params
+  const routeExpanded = useMemo(() => {
+    const keys = new Set<string>();
+    const connId = params.connectionId;
+    const database = params.database;
+    const container = params.container;
+    const path = params['_splat'] || '';
+    
+    if (!connId) return keys;
+    
+    // Always expand the active connection
+    keys.add(connId);
+    
+    // For database connections: expand active database
+    if (database) {
+      keys.add(`${connId}:${database}`);
+    }
+    
+    // For storage connections: expand active container
+    if (container) {
+      keys.add(`container:${connId}:${container}`);
+    }
+    
+    // For storage: expand path segments if there's a path
+    if (container && path) {
+      const segments = path.split('/').filter(Boolean);
+      let currentPath = '';
+      for (const segment of segments) {
+        currentPath = currentPath ? `${currentPath}/${segment}` : segment;
+        // Don't expand the last segment if it's a file (no trailing /)
+        if (currentPath !== path.replace(/\/$/, '')) {
+          keys.add(`folder:${connId}:${container}:${currentPath}/`);
+        }
+      }
+    }
+    
+    return keys;
+  }, [params]);
+  
+  // Combine route-based expansion with manual toggles
+  const expanded = useMemo(() => {
+    return new Set([...routeExpanded, ...manualExpanded]);
+  }, [routeExpanded, manualExpanded]);
 
   const toggle = (key: string) => {
-    setExpanded((prev) => {
+    setManualExpanded((prev) => {
       const next = new Set(prev);
+      // If it's in route-expanded and we're toggling, we need to remove it
+      // If it's in manual-expanded, toggle it
       if (next.has(key)) {
         next.delete(key);
+      } else if (routeExpanded.has(key)) {
+        // If it's auto-expanded by route, we can't collapse it via manual toggle
+        // unless we track "collapsed" items separately - for now, just keep it expanded
+        return prev;
       } else {
         next.add(key);
       }
@@ -71,35 +130,35 @@ export function Sidebar({
     });
   };
 
-  const saveConnection = (conn: Omit<Connection, 'id' | 'createdAt'>) => {
+  const saveConnection = async (conn: Omit<Connection, 'id' | 'createdAt'>): Promise<Connection> => {
     if (modalState.connection) {
       // Edit existing connection - update all fields
       connectionsCollection.update(modalState.connection.id, (draft: Connection) => {
         Object.assign(draft, conn);
       });
+      return { ...modalState.connection, ...conn };
     } else {
       // Add new connection
       const id = crypto.randomUUID();
       const newConn = { ...conn, id, createdAt: new Date().toISOString() } as Connection;
       connectionsCollection.insert(newConn);
       onSelectConnection(id);
-      setExpanded((prev) => new Set(prev).add(id));
+      setManualExpanded((prev) => new Set(prev).add(id));
+      return newConn;
     }
-    setModalState({ open: false });
   };
 
-  const deleteConnection = (id: string) => {
+  const deleteConnection = async (id: string): Promise<void> => {
     connectionsCollection.delete(id);
-    if (activeConnectionId === id) {
+    if (params.connectionId === id) {
       onSelectConnection(null);
     }
   };
 
   // Get connection label based on type
   const getConnectionLabel = (conn: Connection): string => {
-    if (isDatabaseConnection(conn)) {
-      const dbConn = conn as DatabaseConnection;
-      switch (dbConn.driver) {
+    if (isSQLConnection(conn) && conn.sql) {
+      switch (conn.sql.driver) {
         case 'postgres': return 'PG';
         case 'mysql': return 'MY';
         case 'sqlserver': return 'MS';
@@ -107,21 +166,24 @@ export function Sidebar({
         case 'sqlite': return 'SQ';
         default: return 'DB';
       }
-    } else {
-      const storageConn = conn as StorageConnection;
-      return storageConn.provider === 's3' ? 'S3' : 'AZ';
+    } else if (conn.amazonS3) {
+      return 'S3';
+    } else if (conn.azureBlob) {
+      return 'AZ';
     }
+    return '??';
   };
 
   // Get color class for connection type
   const getConnectionColor = (conn: Connection): string => {
-    if (isDatabaseConnection(conn)) {
-      const dbConn = conn as DatabaseConnection;
-      return driverColors[dbConn.driver] || 'text-neutral-500';
-    } else {
-      const storageConn = conn as StorageConnection;
-      return driverColors[storageConn.provider] || 'text-neutral-500';
+    if (isSQLConnection(conn) && conn.sql) {
+      return driverColors[conn.sql.driver] || 'text-neutral-500';
+    } else if (conn.amazonS3) {
+      return driverColors['s3'] || 'text-neutral-500';
+    } else if (conn.azureBlob) {
+      return driverColors['azure-blob'] || 'text-neutral-500';
     }
+    return 'text-neutral-500';
   };
 
   return (
@@ -171,7 +233,7 @@ export function Sidebar({
             <div className="space-y-0.5 pb-2">
               {(connections?.data ?? []).map((conn) => {
                       const isExpanded = expanded.has(conn.id);
-                      const isDatabase = isDatabaseConnection(conn);
+                      const isDatabase = isSQLConnection(conn);
                       const isStorage = isStorageConnection(conn);
 
                       return (
@@ -223,13 +285,11 @@ export function Sidebar({
                           {isExpanded && isDatabase && (
                             <div className="ml-4">
                               <DatabaseBrowser
-                                connection={conn as DatabaseConnection}
-                                activeDatabase={activeDatabase}
-                                activeTable={activeTable}
+                                connection={conn}
                                 expanded={expanded}
                                 onToggle={toggle}
-                                onSelectDatabase={onSelectDatabase}
-                                onSelectTable={onSelectTable}
+                                onSelectDatabase={(db) => onSelectDatabase(conn.id, db)}
+                                onSelectTable={(db, tbl) => onSelectTable(conn.id, db, tbl)}
                               />
                             </div>
                           )}
@@ -238,14 +298,12 @@ export function Sidebar({
                           {isExpanded && isStorage && (
                             <div className="ml-4">
                               <ObjectStorageBrowser
-                                connection={conn as StorageConnection}
-                                activeContainer={activeContainer}
-                                activePath={activePath}
+                                connection={conn}
                                 expanded={expanded}
                                 onToggle={toggle}
-                                onSelectContainer={onSelectContainer}
-                                onSelectPath={onSelectPath}
-                                onCreateContainer={() => setCreateContainerFor(conn as StorageConnection)}
+                                onSelectContainer={(container) => onSelectContainer(conn.id, container)}
+                                onSelectPath={(container, path) => onSelectPath(conn.id, container, path)}
+                                onCreateContainer={() => setCreateContainerFor(conn)}
                               />
                             </div>
                           )}

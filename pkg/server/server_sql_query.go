@@ -4,9 +4,27 @@ import (
 	"database/sql"
 	"encoding/json"
 	"net/http"
+	"os"
 )
 
 func (s *Server) handleQuery(w http.ResponseWriter, r *http.Request) {
+	connID := r.PathValue("connection")
+
+	conn, err := s.getConnection(connID)
+	if err != nil {
+		if os.IsNotExist(err) {
+			writeError(w, http.StatusNotFound, "connection not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	if conn.SQL == nil {
+		writeError(w, http.StatusBadRequest, "connection is not a SQL connection")
+		return
+	}
+
 	var req SQLRequest
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -14,7 +32,10 @@ func (s *Server) handleQuery(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	db, err := sql.Open(req.Driver, req.DSN)
+	// Modify DSN if a specific database is requested
+	dsn := modifyDSNForDatabase(conn.SQL.Driver, conn.SQL.DSN, req.Database)
+
+	db, err := sql.Open(conn.SQL.Driver, dsn)
 
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "Failed to open database: "+err.Error())

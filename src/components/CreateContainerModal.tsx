@@ -2,10 +2,10 @@ import { useState } from 'react';
 import { X, Loader2, Box } from 'lucide-react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { createContainer } from '../lib/adapters/storage';
-import type { StorageConnection } from '../types';
+import type { Connection } from '../types';
 
 interface CreateContainerModalProps {
-  connection: StorageConnection;
+  connection: Connection;
   onClose: () => void;
 }
 
@@ -13,10 +13,10 @@ export function CreateContainerModal({ connection, onClose }: CreateContainerMod
   const queryClient = useQueryClient();
   const [name, setName] = useState('');
 
-  const containerSingular = connection.provider === 's3' ? 'Bucket' : 'Container';
+  const containerSingular = connection.amazonS3 ? 'Bucket' : 'Container';
 
   const createMutation = useMutation({
-    mutationFn: (containerName: string) => createContainer(connection, containerName),
+    mutationFn: (containerName: string) => createContainer(connection.id, containerName),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['storage-containers', connection.id] });
       onClose();
@@ -80,7 +80,7 @@ export function CreateContainerModal({ connection, onClose }: CreateContainerMod
               disabled={createMutation.isPending}
             />
             <p className="text-[11px] text-neutral-400 dark:text-neutral-500">
-              {connection.provider === 's3' 
+              {connection.amazonS3 
                 ? 'Bucket names must be globally unique and follow S3 naming rules'
                 : 'Container names must be lowercase and can contain letters, numbers, and hyphens'}
             </p>

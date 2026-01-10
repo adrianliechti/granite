@@ -4,52 +4,48 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"os"
 
 	"github.com/gabriel-vasile/mimetype"
 )
 
-// POST /storage/upload - Upload an object to storage
+// POST /storage/{connection}/upload - Upload an object to storage
 func (s *Server) handleStorageUploadObject(w http.ResponseWriter, r *http.Request) {
+	connID := r.PathValue("connection")
+
+	conn, err := s.getConnection(connID)
+	if err != nil {
+		if os.IsNotExist(err) {
+			writeError(w, http.StatusNotFound, "connection not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	if conn.AmazonS3 == nil && conn.AzureBlob == nil {
+		writeError(w, http.StatusBadRequest, "connection is not a storage connection")
+		return
+	}
+
 	// Parse multipart form (32 MB max)
 	if err := r.ParseMultipartForm(32 << 20); err != nil {
 		writeError(w, http.StatusBadRequest, "Failed to parse multipart form")
 		return
 	}
 
-	// Get connection details from form
-	provider := r.FormValue("provider")
-	configJSON := r.FormValue("config")
+	// Get upload parameters from form
 	container := r.FormValue("container")
 	objectKey := r.FormValue("key")
 
-	if provider == "" || configJSON == "" || container == "" || objectKey == "" {
-		writeError(w, http.StatusBadRequest, "provider, config, container, and key are required")
+	if container == "" || objectKey == "" {
+		writeError(w, http.StatusBadRequest, "container and key are required")
 		return
-	}
-
-	// Parse config
-	var configMap map[string]any
-<<<<<<< HEAD
-=======
-
->>>>>>> a59f79b23a93bc5d1230c130632a6daa6204d0cf
-	if err := json.Unmarshal([]byte(configJSON), &configMap); err != nil {
-		writeError(w, http.StatusBadRequest, "Invalid config JSON")
-		return
-	}
-
-	// Build storage request
-	storageReq := StorageRequest{
-		Provider: provider,
-		Config:   configMap,
 	}
 
 	ctx := r.Context()
-	storageProvider, err := newStorageProvider(ctx, storageReq)
-<<<<<<< HEAD
-=======
+	storageProvider, err := newStorageProviderFromConnection(ctx, conn)
 
->>>>>>> a59f79b23a93bc5d1230c130632a6daa6204d0cf
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -57,26 +53,17 @@ func (s *Server) handleStorageUploadObject(w http.ResponseWriter, r *http.Reques
 
 	// Get the uploaded file
 	file, header, err := r.FormFile("file")
-<<<<<<< HEAD
-=======
 
->>>>>>> a59f79b23a93bc5d1230c130632a6daa6204d0cf
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "No file uploaded")
 		return
 	}
-<<<<<<< HEAD
-=======
 
->>>>>>> a59f79b23a93bc5d1230c130632a6daa6204d0cf
 	defer file.Close()
 
 	// Read file data
 	data, err := io.ReadAll(file)
-<<<<<<< HEAD
-=======
 
->>>>>>> a59f79b23a93bc5d1230c130632a6daa6204d0cf
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "Failed to read file")
 		return
@@ -84,17 +71,11 @@ func (s *Server) handleStorageUploadObject(w http.ResponseWriter, r *http.Reques
 
 	// Get content type from form or header
 	contentType := r.FormValue("contentType")
-<<<<<<< HEAD
-	if contentType == "" {
-		contentType = header.Header.Get("Content-Type")
-	}
-=======
 
 	if contentType == "" {
 		contentType = header.Header.Get("Content-Type")
 	}
 
->>>>>>> a59f79b23a93bc5d1230c130632a6daa6204d0cf
 	if contentType == "" {
 		// Detect from file content
 		mtype := mimetype.Detect(data)

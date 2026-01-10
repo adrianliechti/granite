@@ -1,5 +1,5 @@
 import type { 
-  StorageConnection, 
+  Connection, 
   StorageContainer, 
   StorageObject, 
   StorageObjectDetails,
@@ -23,20 +23,12 @@ export interface ListObjectsResult {
   continuationToken?: string;
 }
 
-// Build request body for storage operations
-function buildStorageRequest(connection: StorageConnection) {
-  return {
-    provider: connection.provider,
-    config: connection.config,
-  };
-}
-
 // List all containers
-export async function listContainers(connection: StorageConnection): Promise<StorageContainer[]> {
-  const response = await fetch('/storage/containers', {
+export async function listContainers(connectionId: string): Promise<StorageContainer[]> {
+  const response = await fetch(`/storage/${encodeURIComponent(connectionId)}/containers`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(buildStorageRequest(connection)),
+    body: JSON.stringify({}),
   });
 
   if (!response.ok) {
@@ -48,14 +40,11 @@ export async function listContainers(connection: StorageConnection): Promise<Sto
 }
 
 // Create a new container
-export async function createContainer(connection: StorageConnection, name: string): Promise<void> {
-  const response = await fetch('/storage/containers/create', {
+export async function createContainer(connectionId: string, name: string): Promise<void> {
+  const response = await fetch(`/storage/${encodeURIComponent(connectionId)}/containers/create`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      ...buildStorageRequest(connection),
-      name,
-    }),
+    body: JSON.stringify({ name }),
   });
 
   if (!response.ok) {
@@ -66,15 +55,14 @@ export async function createContainer(connection: StorageConnection, name: strin
 
 // List objects in a container with optional prefix (for folder navigation)
 export async function listObjects(
-  connection: StorageConnection,
+  connectionId: string,
   container: string,
   options: ListObjectsOptions = {}
 ): Promise<ListObjectsResult> {
-  const response = await fetch('/storage/objects', {
+  const response = await fetch(`/storage/${encodeURIComponent(connectionId)}/objects`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      ...buildStorageRequest(connection),
       container,
       prefix: options.prefix || '',
       delimiter: options.delimiter ?? '/',
@@ -93,18 +81,14 @@ export async function listObjects(
 
 // Get detailed metadata for a specific object
 export async function getObjectDetails(
-  connection: StorageConnection,
+  connectionId: string,
   container: string,
   key: string
 ): Promise<StorageObjectDetails> {
-  const response = await fetch('/storage/object/details', {
+  const response = await fetch(`/storage/${encodeURIComponent(connectionId)}/object/details`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      ...buildStorageRequest(connection),
-      container,
-      key,
-    }),
+    body: JSON.stringify({ container, key }),
   });
 
   if (!response.ok) {
@@ -117,20 +101,15 @@ export async function getObjectDetails(
 
 // Generate a presigned URL for downloading an object
 export async function getPresignedUrl(
-  connection: StorageConnection,
+  connectionId: string,
   container: string,
   key: string,
   expiresIn: number = 3600
 ): Promise<string> {
-  const response = await fetch('/storage/object/presign', {
+  const response = await fetch(`/storage/${encodeURIComponent(connectionId)}/object/presign`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      ...buildStorageRequest(connection),
-      container,
-      key,
-      expiresIn,
-    }),
+    body: JSON.stringify({ container, key, expiresIn }),
   });
 
   if (!response.ok) {
@@ -144,19 +123,17 @@ export async function getPresignedUrl(
 
 // Upload a file to object storage
 export async function uploadObject(
-  connection: StorageConnection,
+  connectionId: string,
   container: string,
   key: string,
   file: File
 ): Promise<void> {
   const formData = new FormData();
   formData.append('file', file);
-  formData.append('provider', connection.provider);
-  formData.append('config', JSON.stringify(connection.config));
   formData.append('container', container);
   formData.append('key', key);
   
-  const response = await fetch('/storage/upload', {
+  const response = await fetch(`/storage/${encodeURIComponent(connectionId)}/upload`, {
     method: 'POST',
     body: formData,
   });
@@ -169,18 +146,14 @@ export async function uploadObject(
 
 // Delete one or more objects from storage
 export async function deleteObjects(
-  connection: StorageConnection,
+  connectionId: string,
   container: string,
   keys: string[]
 ): Promise<void> {
-  const response = await fetch('/storage/object/delete', {
+  const response = await fetch(`/storage/${encodeURIComponent(connectionId)}/object/delete`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      ...buildStorageRequest(connection),
-      container,
-      keys,
-    }),
+    body: JSON.stringify({ container, keys }),
   });
 
   if (!response.ok) {
@@ -191,12 +164,12 @@ export async function deleteObjects(
 
 // Delete all objects with a given prefix (for folder deletion)
 export async function deletePrefix(
-  connection: StorageConnection,
+  connectionId: string,
   container: string,
   prefix: string
 ): Promise<void> {
   // First, list all objects with this prefix (without delimiter to get all nested objects)
-  const result = await listObjects(connection, container, { 
+  const result = await listObjects(connectionId, container, { 
     prefix, 
     delimiter: '', // No delimiter means get all nested objects
     maxKeys: 1000 
@@ -207,19 +180,37 @@ export async function deletePrefix(
   }
 
   const keys = result.objects.map(obj => obj.key);
-  await deleteObjects(connection, container, keys);
+  await deleteObjects(connectionId, container, keys);
 
   // If there were more objects (truncated), recursively delete
   if (result.isTruncated) {
-    await deletePrefix(connection, container, prefix);
+    await deletePrefix(connectionId, container, prefix);
   }
 }
 
 // Test storage connection
-export async function testStorageConnection(connection: StorageConnection): Promise<boolean> {
+export async function testStorageConnection(connectionId: string): Promise<boolean> {
   try {
-    await listContainers(connection);
+    await listContainers(connectionId);
     return true;
+  } catch {
+    return false;
+  }
+}
+
+// Legacy function for testing unsaved connections - creates temp connection data
+export async function testStorageConnectionDirect(connection: Connection): Promise<boolean> {
+  // For testing unsaved connections, we need to call the test endpoint directly
+  // This requires a temporary approach since connection isn't saved yet
+  try {
+    // Create a temporary test by checking if the config is valid
+    if (connection.amazonS3) {
+      return !!connection.amazonS3.region && !!connection.amazonS3.accessKeyId && !!connection.amazonS3.secretAccessKey;
+    }
+    if (connection.azureBlob) {
+      return !!connection.azureBlob.accountName && (!!connection.azureBlob.accountKey || !!connection.azureBlob.connectionString);
+    }
+    return false;
   } catch {
     return false;
   }

@@ -88,13 +88,6 @@ export const postgresAdapter: DatabaseAdapter = {
     `;
   },
 
-  modifyDsnForDatabase(dsn: string, database: string) {
-    // PostgreSQL DSN format: postgres://user:pass@host:port/dbname?params
-    const url = new URL(dsn);
-    url.pathname = `/${database}`;
-    return url.toString();
-  },
-
   parseDatabaseNames(rows) {
     return rows.map((row) => String(row.datname));
   },

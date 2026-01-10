@@ -39,9 +39,6 @@ export interface DatabaseAdapter {
   // Returns which table views this driver supports
   supportedTableViews(): TableView[];
   
-  // DSN manipulation
-  modifyDsnForDatabase(dsn: string, database: string): string;
-  
   // Result parsing - convert raw query results to normalized format
   parseDatabaseNames(rows: Record<string, unknown>[]): string[];
   parseTableNames(rows: Record<string, unknown>[], database?: string): string[];

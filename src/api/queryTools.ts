@@ -146,8 +146,8 @@ export function buildQueryInstructions(environment: QueryChatEnvironment): strin
   
   // Build current environment section
   const envLines: string[] = [];
-  if (connection && 'driver' in connection) {
-    envLines.push(`- **Driver**: ${connection.driver}`);
+  if (connection && connection.sql) {
+    envLines.push(`- **Driver**: ${connection.sql.driver}`);
     envLines.push(`- **Database**: ${database || '(none selected)'}`);
     envLines.push(`- **Table**: ${table || '(none selected)'}`);
   } else {

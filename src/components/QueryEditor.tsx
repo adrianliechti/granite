@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import Editor, { type Monaco } from '@monaco-editor/react';
 import { Play, Sparkles, Table2, Columns3, ShieldCheck, Link, ListOrdered, ChevronDown, ChevronUp } from 'lucide-react';
-import type { DatabaseConnection } from '../types';
+import type { Connection } from '../types';
 import type { ColumnInfo, TableView } from '../lib/adapters';
 import type { editor } from 'monaco-editor';
 import { selectAllQuery } from '../lib/adapters';
@@ -13,7 +13,7 @@ export interface SchemaInfo {
 }
 
 interface QueryEditorProps {
-  connection: DatabaseConnection | null;
+  connection: Connection | null;
   selectedTable: string | null;
   onExecute: (sql: string) => void;
   isLoading: boolean;
@@ -80,11 +80,11 @@ export function QueryEditor({ connection, selectedTable, onExecute, isLoading, s
 
   // Update SQL when table selection changes
   useEffect(() => {
-    if (selectedTable && connection) {
+    if (selectedTable && connection && connection.sql) {
       // Using a microtask to avoid the warning about setState in effects
-      queueMicrotask(() => setSql(selectAllQuery(selectedTable, connection.driver)));
+      queueMicrotask(() => setSql(selectAllQuery(selectedTable, connection.sql!.driver)));
     }
-  }, [selectedTable, connection]);
+  }, [selectedTable, connection, setSql]);
 
   // Register autocomplete provider when Monaco is ready or schema changes
   const handleEditorMount = (_editor: editor.IStandaloneCodeEditor, monaco: Monaco) => {
@@ -283,7 +283,7 @@ export function QueryEditor({ connection, selectedTable, onExecute, isLoading, s
             <>
               <span className="font-medium text-neutral-600 dark:text-neutral-300">{connection.name}</span>
               <span className="mx-1.5">·</span>
-              <span className="uppercase">{connection.driver}</span>
+              <span className="uppercase">{connection.sql?.driver ?? 'unknown'}</span>
             </>
           ) : (
             'No connection'

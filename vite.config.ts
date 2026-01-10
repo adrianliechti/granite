@@ -23,7 +23,7 @@ export default defineConfig({
   ],
   server: {
     proxy: {
-      '/data': {
+      '/connections': {
         target: 'http://localhost:7777',
         changeOrigin: true,
       },

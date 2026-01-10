@@ -1,6 +1,6 @@
 
 ```
-postgresql://postgres:KQVm6v853q@localhost:5432/db?sslmode=disable
+postgresql://postgres:5l2Et31vYC@localhost:5432/db?sslmode=disable
 ```
 
 ```

@@ -3,36 +3,38 @@ package server
 import (
 	"encoding/json"
 	"net/http"
+	"os"
 )
 
-// POST /storage/containers - List containers
+// POST /storage/{connection}/containers - List containers
 func (s *Server) handleStorageContainers(w http.ResponseWriter, r *http.Request) {
-	var req StorageRequest
-<<<<<<< HEAD
-=======
+	connID := r.PathValue("connection")
 
->>>>>>> a59f79b23a93bc5d1230c130632a6daa6204d0cf
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "Invalid request body")
+	conn, err := s.getConnection(connID)
+	if err != nil {
+		if os.IsNotExist(err) {
+			writeError(w, http.StatusNotFound, "connection not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	if conn.AmazonS3 == nil && conn.AzureBlob == nil {
+		writeError(w, http.StatusBadRequest, "connection is not a storage connection")
 		return
 	}
 
 	ctx := r.Context()
-	provider, err := newStorageProvider(ctx, req)
-<<<<<<< HEAD
-=======
+	provider, err := newStorageProviderFromConnection(ctx, conn)
 
->>>>>>> a59f79b23a93bc5d1230c130632a6daa6204d0cf
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
 	containers, err := provider.ListContainers(ctx)
-<<<<<<< HEAD
-=======
 
->>>>>>> a59f79b23a93bc5d1230c130632a6daa6204d0cf
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -42,13 +44,27 @@ func (s *Server) handleStorageContainers(w http.ResponseWriter, r *http.Request)
 	json.NewEncoder(w).Encode(containers)
 }
 
-// POST /storage/containers/create - Create a new container
+// POST /storage/{connection}/containers/create - Create a new container
 func (s *Server) handleStorageCreateContainer(w http.ResponseWriter, r *http.Request) {
-	var req CreateContainerRequest
-<<<<<<< HEAD
-=======
+	connID := r.PathValue("connection")
 
->>>>>>> a59f79b23a93bc5d1230c130632a6daa6204d0cf
+	conn, err := s.getConnection(connID)
+	if err != nil {
+		if os.IsNotExist(err) {
+			writeError(w, http.StatusNotFound, "connection not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	if conn.AmazonS3 == nil && conn.AzureBlob == nil {
+		writeError(w, http.StatusBadRequest, "connection is not a storage connection")
+		return
+	}
+
+	var req CreateContainerRequest
+
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "Invalid request body")
 		return
@@ -60,11 +76,8 @@ func (s *Server) handleStorageCreateContainer(w http.ResponseWriter, r *http.Req
 	}
 
 	ctx := r.Context()
-	provider, err := newStorageProvider(ctx, req.StorageRequest)
-<<<<<<< HEAD
-=======
+	provider, err := newStorageProviderFromConnection(ctx, conn)
 
->>>>>>> a59f79b23a93bc5d1230c130632a6daa6204d0cf
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return

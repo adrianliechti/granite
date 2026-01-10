@@ -13,6 +13,7 @@ import type { SQLResponse } from '../types';
 
 // Extend TanStack Table's TableMeta to include our updateData function
 declare module '@tanstack/react-table' {
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   interface TableMeta<TData extends RowData> {
     updateData: (rowIndex: number, columnId: string, value: unknown) => void;
   }
