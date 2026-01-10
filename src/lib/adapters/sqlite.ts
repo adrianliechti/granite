@@ -34,11 +34,6 @@ export const sqliteAdapter: DatabaseAdapter = {
     return `PRAGMA index_list(${table})`;
   },
 
-  modifyDsnForDatabase(dsn: string) {
-    // SQLite doesn't need DSN modification - it's file-based
-    return dsn;
-  },
-
   parseDatabaseNames(rows) {
     return rows.map((row) => String(row.name));
   },

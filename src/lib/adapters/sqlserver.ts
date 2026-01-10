@@ -89,13 +89,6 @@ export const sqlserverAdapter: DatabaseAdapter = {
     `;
   },
 
-  modifyDsnForDatabase(dsn: string, database: string) {
-    // MSSQL DSN format: sqlserver://user:pass@host:port?database=dbname
-    const url = new URL(dsn);
-    url.searchParams.set('database', database);
-    return url.toString();
-  },
-
   parseDatabaseNames(rows) {
     return rows.map((row) => String(row.name));
   },

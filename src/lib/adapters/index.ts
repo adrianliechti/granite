@@ -31,11 +31,11 @@ export function getAdapter(driver: string): DatabaseAdapter {
 }
 
 // Execute a query via the backend API (for SELECT-like queries that return rows)
-export async function executeQuery(connectionId: string, query: string): Promise<QueryResult> {
+export async function executeQuery(connectionId: string, query: string, database?: string): Promise<QueryResult> {
   const response = await fetch(`/sql/${encodeURIComponent(connectionId)}/query`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ query, params: [] }),
+    body: JSON.stringify({ query, params: [], database }),
   });
   
   if (!response.ok) {
@@ -47,11 +47,11 @@ export async function executeQuery(connectionId: string, query: string): Promise
 }
 
 // Execute a statement via the backend API (for INSERT/UPDATE/DELETE that modify data)
-export async function executeStatement(connectionId: string, query: string): Promise<QueryResult> {
+export async function executeStatement(connectionId: string, query: string, database?: string): Promise<QueryResult> {
   const response = await fetch(`/sql/${encodeURIComponent(connectionId)}/execute`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ query, params: [] }),
+    body: JSON.stringify({ query, params: [], database }),
   });
   
   if (!response.ok) {
@@ -73,11 +73,11 @@ function isSelectQuery(query: string): boolean {
 }
 
 // Execute SQL - automatically chooses between query and execute endpoints
-export async function executeSQL(connectionId: string, query: string): Promise<QueryResult> {
+export async function executeSQL(connectionId: string, query: string, database?: string): Promise<QueryResult> {
   if (isSelectQuery(query)) {
-    return executeQuery(connectionId, query);
+    return executeQuery(connectionId, query, database);
   }
-  return executeStatement(connectionId, query);
+  return executeStatement(connectionId, query, database);
 }
 
 // High-level API functions that use the adapters
@@ -92,20 +92,18 @@ export async function listDatabases(connectionId: string, driver: string): Promi
 export async function listTables(connectionId: string, driver: string, database?: string): Promise<string[]> {
   const adapter = getAdapter(driver);
   
-  // Note: For database-specific queries, the connection should already be configured for that database
-  // or the adapter should handle it via the query
   const query = adapter.listTablesQuery();
   
-  const data = await executeQuery(connectionId, query);
+  const data = await executeQuery(connectionId, query, database);
   
   return adapter.parseTableNames(data.rows || [], database);
 }
 
-export async function listColumns(connectionId: string, driver: string, table: string): Promise<ColumnInfo[]> {
+export async function listColumns(connectionId: string, driver: string, table: string, database?: string): Promise<ColumnInfo[]> {
   const adapter = getAdapter(driver);
   const query = adapter.listColumnsQuery(table);
   
-  const data = await executeQuery(connectionId, query);
+  const data = await executeQuery(connectionId, query, database);
   
   return adapter.parseColumns(data.rows || []);
 }

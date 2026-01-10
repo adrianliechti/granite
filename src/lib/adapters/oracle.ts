@@ -103,12 +103,6 @@ export const oracleAdapter: DatabaseAdapter = {
     `;
   },
 
-  modifyDsnForDatabase(dsn: string) {
-    // Oracle DSN typically includes the service name, no modification needed
-    // Format: oracle://user:pass@host:port/service_name
-    return dsn;
-  },
-
   parseDatabaseNames(rows) {
     return rows.map((row) => {
       const val = row.name ?? row.NAME;

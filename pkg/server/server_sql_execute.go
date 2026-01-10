@@ -32,7 +32,10 @@ func (s *Server) handleExecute(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	db, err := sql.Open(conn.SQL.Driver, conn.SQL.DSN)
+	// Modify DSN if a specific database is requested
+	dsn := modifyDSNForDatabase(conn.SQL.Driver, conn.SQL.DSN, req.Database)
+
+	db, err := sql.Open(conn.SQL.Driver, dsn)
 
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "Failed to open database: "+err.Error())

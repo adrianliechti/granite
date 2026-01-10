@@ -42,8 +42,9 @@ type SQLConfig struct {
 }
 
 type SQLRequest struct {
-	Query  string `json:"query"`
-	Params []any  `json:"params"`
+	Query    string `json:"query"`
+	Params   []any  `json:"params"`
+	Database string `json:"database,omitempty"` // Optional: specify which database to query
 }
 
 type SQLResponse struct {

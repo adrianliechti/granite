@@ -61,7 +61,7 @@ function AppContent() {
       await Promise.all(
         tablesToFetch.map(async (t) => {
           try {
-            results[t] = await listColumns(dbConnection.id, dbConnection.sql!.driver, t);
+            results[t] = await listColumns(dbConnection.id, dbConnection.sql!.driver, t, database);
           } catch {
             results[t] = [];
           }
@@ -119,7 +119,8 @@ function AppContent() {
 
       const response = await executeSQL(
         dbConnection.id,
-        sql
+        sql,
+        database
       );
 
       const duration = performance.now() - start;
@@ -208,11 +209,11 @@ function AppContent() {
     const sql = `UPDATE ${table} SET ${columnId} = ${formatSqlValue(newValue)} WHERE ${pkColumn} = ${formatSqlValue(pkValue)}`;
 
     try {
-      await executeStatement(dbConnection.id, sql);
+      await executeStatement(dbConnection.id, sql, database);
     } catch (error) {
       console.error('Update failed:', error);
     }
-  }, [dbConnection, table, queryResult?.response?.columns]);
+  }, [dbConnection, table, queryResult?.response?.columns, database]);
 
   // Handle row delete - generates and executes DELETE SQL
   const handleDeleteRow = useCallback(async (row: Record<string, unknown>) => {
@@ -229,13 +230,13 @@ function AppContent() {
     const sql = `DELETE FROM ${table} WHERE ${pkColumn} = ${formatSqlValue(pkValue)}`;
 
     try {
-      await executeStatement(dbConnection.id, sql);
+      await executeStatement(dbConnection.id, sql, database);
       // Refresh the table data
       mutation.mutate(selectAllQuery(table, dbConnection.sql.driver));
     } catch (error) {
       console.error('Delete failed:', error);
     }
-  }, [dbConnection, table, queryResult?.response?.columns, mutation]);
+  }, [dbConnection, table, queryResult?.response?.columns, mutation, database]);
 
   // Query setters for AI integration (database mode only)
   const querySetters = useMemo(() => ({
@@ -243,11 +244,11 @@ function AppContent() {
     executeQuery: handleExecute,
     runQuerySilent: async (sql: string) => {
       if (!dbConnection) throw new Error('No database connection selected');
-      return executeQuery(dbConnection.id, sql);
+      return executeQuery(dbConnection.id, sql, database);
     },
     runStatementSilent: async (sql: string) => {
       if (!dbConnection) throw new Error('No database connection selected');
-      return executeStatement(dbConnection.id, sql);
+      return executeStatement(dbConnection.id, sql, database);
     },
   }), [handleExecute, dbConnection]);
 

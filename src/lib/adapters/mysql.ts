@@ -63,16 +63,6 @@ export const mysqlAdapter: DatabaseAdapter = {
     return `SHOW INDEX FROM ${table}`;
   },
 
-  modifyDsnForDatabase(dsn: string, database: string) {
-    // MySQL DSN format: user:pass@tcp(host:port)/dbname
-    const dsnParts = dsn.split('/');
-    if (dsnParts.length > 1) {
-      dsnParts[dsnParts.length - 1] = database;
-      return dsnParts.join('/');
-    }
-    return `${dsn}/${database}`;
-  },
-
   parseDatabaseNames(rows) {
     return rows.map((row) => String(row.Database || Object.values(row)[0]));
   },
