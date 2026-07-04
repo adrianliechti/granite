@@ -1,7 +1,16 @@
 import type { DatabaseAdapter, ColumnInfo, TableView } from './types';
+import { sqlLiteral } from './types';
 
 export const mysqlAdapter: DatabaseAdapter = {
   driver: 'mysql',
+
+  quoteIdentifier(name: string) {
+    return `\`${name.replace(/`/g, '``')}\``;
+  },
+
+  pingQuery() {
+    return 'SELECT 1';
+  },
 
   supportedTableViews(): TableView[] {
     return ['records', 'columns', 'constraints', 'foreignKeys', 'indexes'];
@@ -16,11 +25,11 @@ export const mysqlAdapter: DatabaseAdapter = {
   },
 
   listColumnsQuery(table: string) {
-    return `DESCRIBE ${table}`;
+    return `DESCRIBE ${this.quoteIdentifier(table)}`;
   },
 
   selectAllQuery(table: string, limit = 100) {
-    return `SELECT * FROM ${table} LIMIT ${limit}`;
+    return `SELECT * FROM ${this.quoteIdentifier(table)} LIMIT ${limit}`;
   },
 
   createDatabaseQuery(name: string) {
@@ -38,7 +47,7 @@ export const mysqlAdapter: DatabaseAdapter = {
         ON tc.CONSTRAINT_NAME = kcu.CONSTRAINT_NAME 
         AND tc.TABLE_SCHEMA = kcu.TABLE_SCHEMA
         AND tc.TABLE_NAME = kcu.TABLE_NAME
-      WHERE tc.TABLE_NAME = '${table}'
+      WHERE tc.TABLE_NAME = '${sqlLiteral(table)}'
         AND tc.TABLE_SCHEMA = DATABASE()
       ORDER BY tc.CONSTRAINT_NAME, kcu.ORDINAL_POSITION
     `;
@@ -52,7 +61,7 @@ export const mysqlAdapter: DatabaseAdapter = {
         kcu.REFERENCED_TABLE_NAME AS foreign_table,
         kcu.REFERENCED_COLUMN_NAME AS foreign_column
       FROM information_schema.KEY_COLUMN_USAGE kcu
-      WHERE kcu.TABLE_NAME = '${table}'
+      WHERE kcu.TABLE_NAME = '${sqlLiteral(table)}'
         AND kcu.TABLE_SCHEMA = DATABASE()
         AND kcu.REFERENCED_TABLE_NAME IS NOT NULL
       ORDER BY kcu.CONSTRAINT_NAME
@@ -60,7 +69,7 @@ export const mysqlAdapter: DatabaseAdapter = {
   },
 
   listIndexesQuery(table: string) {
-    return `SHOW INDEX FROM ${table}`;
+    return `SHOW INDEX FROM ${this.quoteIdentifier(table)}`;
   },
 
   parseDatabaseNames(rows) {

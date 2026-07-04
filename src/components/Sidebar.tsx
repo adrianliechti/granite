@@ -3,6 +3,7 @@ import { Plus, Trash2, Pencil, Database, Package } from 'lucide-react';
 import { useParams, useNavigate } from '@tanstack/react-router';
 import { useLiveQuery } from '@tanstack/react-db';
 import { connectionsCollection } from '../lib/collections';
+import { encodePathSegments } from '../lib/adapters';
 import { ConnectionModal } from './ConnectionModal';
 import { CreateContainerModal } from './CreateContainerModal';
 import { DatabaseBrowser } from './DatabaseBrowser';
@@ -44,20 +45,20 @@ export function Sidebar({
   };
 
   const onSelectDatabase = (connId: string, db: string) => {
-    navigate({ to: `/${connId}/${db}` });
+    navigate({ to: `/${connId}/${encodeURIComponent(db)}` });
   };
 
   const onSelectTable = (connId: string, db: string, tbl: string) => {
-    navigate({ to: `/${connId}/${db}/${tbl}` });
+    navigate({ to: `/${connId}/${encodeURIComponent(db)}/${encodeURIComponent(tbl)}` });
   };
 
   const onSelectContainer = (connId: string, cont: string) => {
-    navigate({ to: `/${connId}/container/${cont}` });
+    navigate({ to: `/${connId}/container/${encodeURIComponent(cont)}` });
   };
 
   const onSelectPath = (connId: string, cont: string, path: string) => {
     const normalizedPath = path.replace(/^\/+/, '');
-    navigate({ to: `/${connId}/container/${cont}/${normalizedPath}` });
+    navigate({ to: `/${connId}/container/${encodeURIComponent(cont)}/${encodePathSegments(normalizedPath)}` });
   };
 
   const connections = useLiveQuery((q) =>
@@ -66,7 +67,8 @@ export function Sidebar({
 
   const [modalState, setModalState] = useState<{ open: boolean; connection?: Connection | null }>({ open: false });
   const [createContainerFor, setCreateContainerFor] = useState<Connection | null>(null);
-  const [manualExpanded, setManualExpanded] = useState<Set<string>>(new Set());
+  // Manual expand/collapse overrides on top of route-driven expansion (true = open, false = closed)
+  const [overrides, setOverrides] = useState<Map<string, boolean>>(new Map());
   
   // Compute items that should be auto-expanded based on route params
   const routeExpanded = useMemo(() => {
@@ -107,45 +109,52 @@ export function Sidebar({
     return keys;
   }, [params]);
   
-  // Combine route-based expansion with manual toggles
+  // When navigation newly expands a key, drop a stale manual collapse for it
+  // so the active route is never hidden (adjust during render)
+  const [prevRouteExpanded, setPrevRouteExpanded] = useState(routeExpanded);
+  if (routeExpanded !== prevRouteExpanded) {
+    setPrevRouteExpanded(routeExpanded);
+    const stale = [...routeExpanded].filter(
+      (key) => !prevRouteExpanded.has(key) && overrides.get(key) === false
+    );
+    if (stale.length > 0) {
+      setOverrides((prev) => {
+        const next = new Map(prev);
+        stale.forEach((key) => next.delete(key));
+        return next;
+      });
+    }
+  }
+
+  // Route-based expansion with manual overrides applied on top
   const expanded = useMemo(() => {
-    return new Set([...routeExpanded, ...manualExpanded]);
-  }, [routeExpanded, manualExpanded]);
+    const keys = new Set(routeExpanded);
+    for (const [key, open] of overrides) {
+      if (open) {
+        keys.add(key);
+      } else {
+        keys.delete(key);
+      }
+    }
+    return keys;
+  }, [routeExpanded, overrides]);
 
   const toggle = (key: string) => {
-    setManualExpanded((prev) => {
-      const next = new Set(prev);
-      // If it's in route-expanded and we're toggling, we need to remove it
-      // If it's in manual-expanded, toggle it
-      if (next.has(key)) {
-        next.delete(key);
-      } else if (routeExpanded.has(key)) {
-        // If it's auto-expanded by route, we can't collapse it via manual toggle
-        // unless we track "collapsed" items separately - for now, just keep it expanded
-        return prev;
-      } else {
-        next.add(key);
-      }
-      return next;
-    });
+    const open = !expanded.has(key);
+    setOverrides((prev) => new Map(prev).set(key, open));
   };
 
-  const saveConnection = async (conn: Omit<Connection, 'id' | 'createdAt'>): Promise<Connection> => {
+  // Sync the local collection after the modal has already persisted the
+  // connection on the server (write*, not insert/update, to avoid re-posting)
+  const saveConnection = async (conn: Connection): Promise<Connection> => {
     if (modalState.connection) {
-      // Edit existing connection - update all fields
-      connectionsCollection.update(modalState.connection.id, (draft: Connection) => {
-        Object.assign(draft, conn);
-      });
-      return { ...modalState.connection, ...conn };
+      connectionsCollection.utils.writeUpdate(conn);
     } else {
-      // Add new connection
-      const id = crypto.randomUUID();
-      const newConn = { ...conn, id, createdAt: new Date().toISOString() } as Connection;
-      connectionsCollection.insert(newConn);
-      onSelectConnection(id);
-      setManualExpanded((prev) => new Set(prev).add(id));
-      return newConn;
+      connectionsCollection.utils.writeInsert(conn);
+      onSelectConnection(conn.id);
+      setOverrides((prev) => new Map(prev).set(conn.id, true));
     }
+    return conn;
   };
 
   const deleteConnection = async (id: string): Promise<void> => {

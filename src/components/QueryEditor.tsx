@@ -4,7 +4,6 @@ import { Play, Sparkles, Table2, Columns3, ShieldCheck, Link, ListOrdered, Chevr
 import type { Connection } from '../types';
 import type { ColumnInfo, TableView } from '../lib/adapters';
 import type { editor } from 'monaco-editor';
-import { selectAllQuery } from '../lib/adapters';
 
 // Schema info for autocomplete
 export interface SchemaInfo {
@@ -18,9 +17,9 @@ interface QueryEditorProps {
   onExecute: (sql: string) => void;
   isLoading: boolean;
   schema?: SchemaInfo;
-  // Controlled state for AI integration
-  value?: string;
-  onChange?: (sql: string) => void;
+  // Controlled editor state (owned by App for AI integration)
+  value: string;
+  onChange: (sql: string) => void;
   // AI panel toggle
   onToggleAI?: () => void;
   aiPanelOpen?: boolean;
@@ -52,11 +51,9 @@ const SQL_KEYWORDS = [
 ];
 
 export function QueryEditor({ connection, selectedTable, onExecute, isLoading, schema, value, onChange, onToggleAI, aiPanelOpen, supportedViews, onSelectView, activeView, onExpandEditor }: QueryEditorProps) {
-  const [internalSql, setInternalSql] = useState('');
   const [isCollapsed, setIsCollapsed] = useState(true);
-  // Use controlled state if provided, otherwise use internal state
-  const sql = value !== undefined ? value : internalSql;
-  const setSql = onChange !== undefined ? onChange : setInternalSql;
+  const sql = value;
+  const setSql = onChange;
   const monacoRef = useRef<Monaco | null>(null);
   const disposableRef = useRef<{ dispose: () => void } | null>(null);
   const schemaRef = useRef<SchemaInfo | undefined>(schema);
@@ -77,14 +74,6 @@ export function QueryEditor({ connection, selectedTable, onExecute, isLoading, s
   useEffect(() => {
     schemaRef.current = schema;
   }, [schema]);
-
-  // Update SQL when table selection changes
-  useEffect(() => {
-    if (selectedTable && connection && connection.sql) {
-      // Using a microtask to avoid the warning about setState in effects
-      queueMicrotask(() => setSql(selectAllQuery(selectedTable, connection.sql!.driver)));
-    }
-  }, [selectedTable, connection, setSql]);
 
   // Register autocomplete provider when Monaco is ready or schema changes
   const handleEditorMount = (_editor: editor.IStandaloneCodeEditor, monaco: Monaco) => {

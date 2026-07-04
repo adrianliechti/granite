@@ -32,7 +32,7 @@ export function DatabaseBrowser({
   const [createDbError, setCreateDbError] = useState<string | null>(null);
   const [isCreatingDb, setIsCreatingDb] = useState(false);
 
-  const { data: databases } = useQuery({
+  const { data: databases, error: databasesError } = useQuery({
     queryKey: ['databases', connection.id],
     queryFn: () => listDatabases(connection.id, connection.sql!.driver),
     enabled: !!connection && !!connection.sql,
@@ -168,7 +168,11 @@ export function DatabaseBrowser({
             </div>
           );
         })}
-        {(!databases || databases.length === 0) && (
+        {databasesError ? (
+          <div className="px-3 py-1.5 text-xs text-red-500 dark:text-red-400 break-all">
+            {databasesError instanceof Error ? databasesError.message : 'Failed to list databases'}
+          </div>
+        ) : (!databases || databases.length === 0) && (
           <div className="px-3 py-1.5 text-xs text-neutral-400 dark:text-neutral-600">
             No databases
           </div>

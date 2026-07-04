@@ -109,17 +109,6 @@ export interface StorageObjectDetails {
 // SQL Types
 // ============================================================================
 
-// Saved query
-export interface SavedQuery {
-  id: string;
-  name: string;
-  connectionId: string;
-  query: string;
-  params: string; // JSON string
-  createdAt: string;
-  updatedAt: string;
-}
-
 // SQL request to backend
 export interface SQLRequest {
   query: string;

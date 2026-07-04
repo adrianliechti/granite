@@ -27,7 +27,7 @@ export function ObjectStorageBrowser({
   const activeContainer = params.container ?? null;
   const activePath = params['_splat'] || '';
   // Fetch containers
-  const { data: containers, isLoading: containersLoading } = useQuery({
+  const { data: containers, isLoading: containersLoading, error: containersError } = useQuery({
     queryKey: ['storage-containers', connection.id],
     queryFn: () => listContainers(connection.id),
     enabled: !!connection,
@@ -46,6 +46,10 @@ export function ObjectStorageBrowser({
       {containersLoading ? (
         <div className="px-3 py-1.5 text-xs text-neutral-400 dark:text-neutral-600">
           Loading containers...
+        </div>
+      ) : containersError ? (
+        <div className="px-3 py-1.5 text-xs text-red-500 dark:text-red-400 break-all">
+          {containersError instanceof Error ? containersError.message : 'Failed to list containers'}
         </div>
       ) : containers && containers.length > 0 ? (
         containers.map((container) => {

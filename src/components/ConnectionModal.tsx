@@ -2,11 +2,12 @@ import { useState } from 'react';
 import { useForm } from '@tanstack/react-form';
 import { Loader2, Database, Cloud } from 'lucide-react';
 import type { Connection, DatabaseDriver, StorageProvider } from '../types';
-import { connectionFormSchema } from '../lib/schemas/connection';
+import { pingQuery } from '../lib/adapters';
+import { databaseFormSchema, s3FormSchema, azureFormSchema } from '../lib/schemas/connection';
 
 interface ConnectionModalProps {
   connection?: Connection | null;
-  onSave: (conn: Omit<Connection, 'id' | 'createdAt'>) => Promise<Connection>;
+  onSave: (conn: Connection) => Promise<Connection>;
   onClose: () => void;
 }
 
@@ -101,9 +102,14 @@ function getInitialValues(connection?: Connection | null): FormValues {
   return { ...defaults, name: connection.name };
 }
 
-// Validate based on current form values
+// Validate against the schema matching the selected category/provider so
+// issues carry usable field paths (a union yields a single opaque issue)
 function validateForm(values: FormValues): Record<string, string> | undefined {
-  const result = connectionFormSchema.safeParse(values);
+  const schema =
+    values.category === 'database' ? databaseFormSchema :
+    values.storageProvider === 's3' ? s3FormSchema : azureFormSchema;
+
+  const result = schema.safeParse(values);
   if (result.success) return undefined;
 
   const errors: Record<string, string> = {};
@@ -113,7 +119,7 @@ function validateForm(values: FormValues): Record<string, string> | undefined {
       errors[path] = issue.message;
     }
   }
-  return Object.keys(errors).length > 0 ? errors : undefined;
+  return Object.keys(errors).length > 0 ? errors : { form: 'Invalid connection details' };
 }
 
 export function ConnectionModal({ connection, onSave, onClose }: ConnectionModalProps) {
@@ -151,16 +157,8 @@ export function ConnectionModal({ connection, onSave, onClose }: ConnectionModal
 
   const form = useForm({
     defaultValues: getInitialValues(connection),
-    onSubmit: async ({ value }) => {
-      // Validate before submit
-      const errors = validateForm(value);
-      if (errors) {
-        setSubmitErrors(errors);
-        return;
-      }
-      setSubmitErrors({});
-      await onSave(buildConnectionPayload(value));
-      onClose();
+    onSubmit: async () => {
+      await handleSaveAndTest();
     },
   });
 
@@ -169,10 +167,10 @@ export function ConnectionModal({ connection, onSave, onClose }: ConnectionModal
     setTestError(null);
   };
 
-  // Save & Test: create connection on server, test it, delete if test fails
+  // Save & Test: persist connection on server, test it, roll back if the test fails
   const handleSaveAndTest = async () => {
     const values = form.state.values;
-    
+
     // Validate first
     const errors = validateForm(values);
     if (errors) {
@@ -183,74 +181,72 @@ export function ConnectionModal({ connection, onSave, onClose }: ConnectionModal
     setTestStatus('testing');
     setTestError(null);
 
-    let savedConnection: Connection | null = null;
+    const isNew = !connection?.id;
+    const conn: Connection = {
+      ...buildConnectionPayload(values),
+      id: connection?.id ?? crypto.randomUUID(),
+      createdAt: connection?.createdAt ?? new Date().toISOString(),
+    };
 
     try {
-      // 1. Save connection directly to server first
-      const payload = buildConnectionPayload(values);
-      const connToSave = {
-        ...payload,
-        id: connection?.id || crypto.randomUUID(),
-        createdAt: connection?.createdAt || new Date().toISOString(),
-      };
+      // 1. Persist to the server so the test endpoints can use it
+      const saveResponse = await fetch(
+        isNew ? '/connections' : `/connections/${encodeURIComponent(conn.id)}`,
+        {
+          method: isNew ? 'POST' : 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(conn),
+        }
+      );
 
-      const saveUrl = connection?.id 
-        ? `/connections/${encodeURIComponent(connection.id)}`
-        : '/connections';
-      const saveMethod = connection?.id ? 'PUT' : 'POST';
-      
-      const saveResponse = await fetch(saveUrl, {
-        method: saveMethod,
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(connToSave),
-      });
-      
       if (!saveResponse.ok) {
-        const data = await saveResponse.json();
+        const data = await saveResponse.json().catch(() => ({}));
         throw new Error(data.message || 'Failed to save connection');
       }
-      
-      savedConnection = connToSave as Connection;
 
       // 2. Test the connection
       if (values.category === 'database') {
-        const response = await fetch(`/sql/${savedConnection.id}/query`, {
+        const response = await fetch(`/sql/${encodeURIComponent(conn.id)}/query`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ query: 'SELECT 1', params: [] }),
+          body: JSON.stringify({ query: pingQuery(values.driver), params: [] }),
         });
         const data = await response.json();
         if (data.message) {
           throw new Error(data.message);
         }
       } else {
-        const response = await fetch(`/storage/${savedConnection.id}/containers`, {
+        const response = await fetch(`/storage/${encodeURIComponent(conn.id)}/containers`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
         });
         if (!response.ok) {
-          const data = await response.json();
+          const data = await response.json().catch(() => ({}));
           throw new Error(data.message || 'Connection failed');
         }
       }
 
-      // 3. Success! Update local state via onSave callback
+      // 3. Success! Sync local state (same id, so no duplicate is created)
       setTestStatus('success');
-      await onSave(payload);
+      await onSave(conn);
       setTimeout(() => onClose(), 500);
     } catch (err) {
       setTestStatus('error');
       setTestError(err instanceof Error ? err.message : 'Connection failed');
 
-      // 4. Delete the connection on error (if we created a new one)
-      if (savedConnection && !connection?.id) {
-        try {
-          await fetch(`/connections/${encodeURIComponent(savedConnection.id)}`, {
-            method: 'DELETE',
+      // 4. Roll the server back to its previous state
+      try {
+        if (isNew) {
+          await fetch(`/connections/${encodeURIComponent(conn.id)}`, { method: 'DELETE' });
+        } else if (connection) {
+          await fetch(`/connections/${encodeURIComponent(connection.id)}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(connection),
           });
-        } catch {
-          // Ignore delete errors
         }
+      } catch {
+        // Ignore rollback errors
       }
     }
   };

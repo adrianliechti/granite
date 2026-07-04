@@ -1,7 +1,16 @@
 import type { DatabaseAdapter, ColumnInfo, TableView } from './types';
+import { sqlLiteral } from './types';
 
 export const sqlserverAdapter: DatabaseAdapter = {
   driver: 'sqlserver',
+
+  quoteIdentifier(name: string) {
+    return `[${name.replace(/]/g, ']]')}]`;
+  },
+
+  pingQuery() {
+    return 'SELECT 1';
+  },
 
   supportedTableViews(): TableView[] {
     return ['records', 'columns', 'constraints', 'foreignKeys', 'indexes'];
@@ -28,16 +37,16 @@ export const sqlserverAdapter: DatabaseAdapter = {
         SELECT ku.COLUMN_NAME
         FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS tc
         JOIN INFORMATION_SCHEMA.KEY_COLUMN_USAGE ku ON tc.CONSTRAINT_NAME = ku.CONSTRAINT_NAME
-        WHERE tc.TABLE_NAME = '${table}' AND tc.CONSTRAINT_TYPE = 'PRIMARY KEY'
+        WHERE tc.TABLE_NAME = '${sqlLiteral(table)}' AND tc.CONSTRAINT_TYPE = 'PRIMARY KEY'
       ) pk ON c.COLUMN_NAME = pk.COLUMN_NAME
-      WHERE c.TABLE_NAME = '${table}'
+      WHERE c.TABLE_NAME = '${sqlLiteral(table)}'
       ORDER BY c.ORDINAL_POSITION
     `;
   },
 
   selectAllQuery(table: string, limit = 100) {
     // SQL Server uses TOP instead of LIMIT
-    return `SELECT TOP ${limit} * FROM ${table}`;
+    return `SELECT TOP ${limit} * FROM ${this.quoteIdentifier(table)}`;
   },
 
   createDatabaseQuery(name: string) {
@@ -53,7 +62,7 @@ export const sqlserverAdapter: DatabaseAdapter = {
       FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS tc
       LEFT JOIN INFORMATION_SCHEMA.KEY_COLUMN_USAGE kcu 
         ON tc.CONSTRAINT_NAME = kcu.CONSTRAINT_NAME
-      WHERE tc.TABLE_NAME = '${table}'
+      WHERE tc.TABLE_NAME = '${sqlLiteral(table)}'
       ORDER BY tc.CONSTRAINT_NAME, kcu.ORDINAL_POSITION
     `;
   },
@@ -67,7 +76,7 @@ export const sqlserverAdapter: DatabaseAdapter = {
         COL_NAME(fkc.referenced_object_id, fkc.referenced_column_id) AS foreign_column
       FROM sys.foreign_keys fk
       JOIN sys.foreign_key_columns fkc ON fk.object_id = fkc.constraint_object_id
-      WHERE OBJECT_NAME(fk.parent_object_id) = '${table}'
+      WHERE OBJECT_NAME(fk.parent_object_id) = '${sqlLiteral(table)}'
       ORDER BY fk.name
     `;
   },
@@ -83,7 +92,7 @@ export const sqlserverAdapter: DatabaseAdapter = {
       FROM sys.indexes i
       JOIN sys.index_columns ic ON i.object_id = ic.object_id AND i.index_id = ic.index_id
       JOIN sys.columns c ON ic.object_id = c.object_id AND ic.column_id = c.column_id
-      WHERE OBJECT_NAME(i.object_id) = '${table}' AND i.name IS NOT NULL
+      WHERE OBJECT_NAME(i.object_id) = '${sqlLiteral(table)}' AND i.name IS NOT NULL
       GROUP BY i.name, i.type_desc, i.is_unique, i.is_primary_key
       ORDER BY i.name
     `;

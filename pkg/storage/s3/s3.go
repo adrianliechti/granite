@@ -52,17 +52,23 @@ func New(ctx context.Context, cfg Config) (*Provider, error) {
 	}
 
 	// Create S3 client with options
-	client := s3.New(s3.Options{
-		Region:       region,
-		BaseEndpoint: aws.String(cfg.Endpoint),
-		UsePathStyle: true,
+	options := s3.Options{
+		Region: region,
 		Credentials: credentials.NewStaticCredentialsProvider(
 			cfg.AccessKeyID,
 			cfg.SecretAccessKey,
 			"",
 		),
 		HTTPClient: httpClient,
-	})
+	}
+
+	// Custom endpoint (MinIO, RustFS, ...) - AWS itself must resolve its regional endpoint
+	if cfg.Endpoint != "" {
+		options.BaseEndpoint = aws.String(cfg.Endpoint)
+		options.UsePathStyle = true
+	}
+
+	client := s3.New(options)
 
 	return &Provider{
 		client: client,
@@ -178,7 +184,7 @@ func (p *Provider) ListObjects(ctx context.Context, container string, opts stora
 	resp := &storage.ListObjectsResult{
 		Objects:     objects,
 		Prefixes:    prefixes,
-		IsTruncated: *result.IsTruncated,
+		IsTruncated: result.IsTruncated != nil && *result.IsTruncated,
 	}
 	if result.NextContinuationToken != nil {
 		resp.ContinuationToken = result.NextContinuationToken
@@ -298,7 +304,7 @@ func (p *Provider) DeleteObjects(ctx context.Context, container string, keys []s
 			}
 		}
 
-		_, err := p.client.DeleteObjects(ctx, &s3.DeleteObjectsInput{
+		result, err := p.client.DeleteObjects(ctx, &s3.DeleteObjectsInput{
 			Bucket: aws.String(container),
 			Delete: &types.Delete{
 				Objects: objects,
@@ -307,6 +313,12 @@ func (p *Provider) DeleteObjects(ctx context.Context, container string, keys []s
 		})
 		if err != nil {
 			return fmt.Errorf("failed to delete objects: %w", err)
+		}
+
+		// In quiet mode only failed deletions are reported - surface them
+		if len(result.Errors) > 0 {
+			first := result.Errors[0]
+			return fmt.Errorf("failed to delete %d object(s): %s (%s)", len(result.Errors), aws.ToString(first.Key), aws.ToString(first.Message))
 		}
 	}
 

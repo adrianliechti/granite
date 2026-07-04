@@ -13,17 +13,28 @@ export interface ColumnInfo {
 export interface QueryResult {
   columns?: string[];
   rows?: Record<string, unknown>[];
-  rowsAffected?: number;
+  rows_affected?: number;
   error?: string;
 }
 
 // Table view types for metadata tabs
 export type TableView = 'records' | 'columns' | 'constraints' | 'foreignKeys' | 'indexes';
 
+// Escape a string for embedding in a single-quoted SQL literal
+export function sqlLiteral(value: string): string {
+  return value.replace(/'/g, "''");
+}
+
 // Database adapter interface - each driver implements this
 export interface DatabaseAdapter {
   readonly driver: Driver;
-  
+
+  // Quote an identifier (table/column name) for this dialect
+  quoteIdentifier(name: string): string;
+
+  // Cheap connectivity-test query for this dialect
+  pingQuery(): string;
+
   // SQL Queries
   listDatabasesQuery(): string;
   listTablesQuery(): string;

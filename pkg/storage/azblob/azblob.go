@@ -12,6 +12,7 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob"
 	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob/blob"
 	azcontainer "github.com/Azure/azure-sdk-for-go/sdk/storage/azblob/container"
+	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob/sas"
 )
 
 // Config contains Azure Blob Storage connection configuration
@@ -127,61 +128,63 @@ func (p *Provider) CreateContainer(ctx context.Context, name string) error {
 	return nil
 }
 
-// ListObjects lists blobs in a container
+// ListObjects lists blobs in a container. One page per call; use the returned
+// continuation token to fetch the next page. An empty delimiter lists all
+// nested blobs flat (used for folder deletion).
 func (p *Provider) ListObjects(ctx context.Context, container string, opts storage.ListObjectsOptions) (*storage.ListObjectsResult, error) {
 	containerClient := p.client.ServiceClient().NewContainerClient(container)
 
-	listOpts := &azcontainer.ListBlobsHierarchyOptions{
-		Prefix: &opts.Prefix,
-	}
+	var maxResults *int32
 	if opts.MaxKeys > 0 {
-		maxResults := int32(opts.MaxKeys)
-		listOpts.MaxResults = &maxResults
+		v := int32(opts.MaxKeys)
+		maxResults = &v
 	}
 
-	delimiter := opts.Delimiter
-	if delimiter == "" {
-		delimiter = "/"
+	var marker *string
+	if opts.ContinuationToken != "" {
+		marker = &opts.ContinuationToken
 	}
 
 	objects := []storage.Object{}
 	prefixes := []string{}
-	isTruncated := false
 
-	pager := containerClient.NewListBlobsHierarchyPager(delimiter, listOpts)
+	var nextMarker *string
 
-	for pager.More() {
+	if opts.Delimiter == "" {
+		pager := containerClient.NewListBlobsFlatPager(&azcontainer.ListBlobsFlatOptions{
+			Prefix:     &opts.Prefix,
+			MaxResults: maxResults,
+			Marker:     marker,
+		})
+
 		page, err := pager.NextPage(ctx)
 		if err != nil {
 			return nil, fmt.Errorf("failed to list blobs: %w", err)
 		}
 
-		for _, blob := range page.Segment.BlobItems {
-			if blob.Name != nil && *blob.Name == opts.Prefix {
-				continue
+		for _, item := range page.Segment.BlobItems {
+			if obj, ok := blobToObject(item, opts.Prefix); ok {
+				objects = append(objects, obj)
 			}
+		}
 
-			o := storage.Object{
-				Key:      *blob.Name,
-				Name:     storage.GetObjectName(*blob.Name),
-				IsFolder: false,
+		nextMarker = page.NextMarker
+	} else {
+		pager := containerClient.NewListBlobsHierarchyPager(opts.Delimiter, &azcontainer.ListBlobsHierarchyOptions{
+			Prefix:     &opts.Prefix,
+			MaxResults: maxResults,
+			Marker:     marker,
+		})
+
+		page, err := pager.NextPage(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("failed to list blobs: %w", err)
+		}
+
+		for _, item := range page.Segment.BlobItems {
+			if obj, ok := blobToObject(item, opts.Prefix); ok {
+				objects = append(objects, obj)
 			}
-			if blob.Properties != nil {
-				if blob.Properties.ContentLength != nil {
-					o.Size = *blob.Properties.ContentLength
-				}
-				if blob.Properties.LastModified != nil {
-					o.LastModified = blob.Properties.LastModified.Format(time.RFC3339)
-				}
-				if blob.Properties.ETag != nil {
-					etag := string(*blob.Properties.ETag)
-					o.ETag = &etag
-				}
-				if blob.Properties.ContentType != nil {
-					o.ContentType = blob.Properties.ContentType
-				}
-			}
-			objects = append(objects, o)
 		}
 
 		for _, prefix := range page.Segment.BlobPrefixes {
@@ -190,17 +193,50 @@ func (p *Provider) ListObjects(ctx context.Context, container string, opts stora
 			}
 		}
 
-		if pager.More() {
-			isTruncated = true
-			break
+		nextMarker = page.NextMarker
+	}
+
+	result := &storage.ListObjectsResult{
+		Objects:  objects,
+		Prefixes: prefixes,
+	}
+
+	if nextMarker != nil && *nextMarker != "" {
+		result.IsTruncated = true
+		result.ContinuationToken = nextMarker
+	}
+
+	return result, nil
+}
+
+func blobToObject(item *azcontainer.BlobItem, prefix string) (storage.Object, bool) {
+	if item.Name == nil || *item.Name == prefix {
+		return storage.Object{}, false
+	}
+
+	o := storage.Object{
+		Key:      *item.Name,
+		Name:     storage.GetObjectName(*item.Name),
+		IsFolder: false,
+	}
+
+	if item.Properties != nil {
+		if item.Properties.ContentLength != nil {
+			o.Size = *item.Properties.ContentLength
+		}
+		if item.Properties.LastModified != nil {
+			o.LastModified = item.Properties.LastModified.Format(time.RFC3339)
+		}
+		if item.Properties.ETag != nil {
+			etag := string(*item.Properties.ETag)
+			o.ETag = &etag
+		}
+		if item.Properties.ContentType != nil {
+			o.ContentType = item.Properties.ContentType
 		}
 	}
 
-	return &storage.ListObjectsResult{
-		Objects:     objects,
-		Prefixes:    prefixes,
-		IsTruncated: isTruncated,
-	}, nil
+	return o, true
 }
 
 // GetObjectDetails returns detailed metadata for a blob
@@ -249,7 +285,7 @@ func (p *Provider) GetObjectDetails(ctx context.Context, containerName, blobName
 	return resp, nil
 }
 
-// GetPresignedURL generates a URL for downloading a blob
+// GetPresignedURL generates a read-only SAS URL for downloading a blob
 func (p *Provider) GetPresignedURL(ctx context.Context, containerName, blobName string, expiresIn int) (string, error) {
 	if p.config.AccountKey == "" {
 		return "", fmt.Errorf("account key required for generating presigned URLs")
@@ -266,8 +302,17 @@ func (p *Provider) GetPresignedURL(ctx context.Context, containerName, blobName 
 		return "", fmt.Errorf("failed to create client: %w", err)
 	}
 
+	if expiresIn <= 0 {
+		expiresIn = 3600 // Default 1 hour
+	}
+
 	blobClient := client.ServiceClient().NewContainerClient(containerName).NewBlobClient(blobName)
-	sasURL := blobClient.URL()
+	expiry := time.Now().Add(time.Duration(expiresIn) * time.Second)
+
+	sasURL, err := blobClient.GetSASURL(sas.BlobPermissions{Read: true}, expiry, nil)
+	if err != nil {
+		return "", fmt.Errorf("failed to generate SAS URL: %w", err)
+	}
 
 	return sasURL, nil
 }

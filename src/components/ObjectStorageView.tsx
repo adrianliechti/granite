@@ -57,6 +57,7 @@ export function ObjectStorageView({ connection, container, path, onNavigate }: O
   const queryClient = useQueryClient();
   const [selectedObject, setSelectedObject] = useState<string | null>(null);
   const [showUploadModal, setShowUploadModal] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
 
   // Normalize path: ensure it ends with '/' when non-empty (for folder prefix listing)
   const normalizedPath = path && !path.endsWith('/') ? path + '/' : path;
@@ -74,6 +75,10 @@ export function ObjectStorageView({ connection, container, path, onNavigate }: O
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['storage-objects', connection.id, container] });
       setSelectedObject(null);
+      setActionError(null);
+    },
+    onError: (err) => {
+      setActionError(err instanceof Error ? err.message : 'Failed to delete object');
     },
   });
 
@@ -82,6 +87,10 @@ export function ObjectStorageView({ connection, container, path, onNavigate }: O
     mutationFn: (prefix: string) => deletePrefix(connection.id, container, prefix),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['storage-objects', connection.id, container] });
+      setActionError(null);
+    },
+    onError: (err) => {
+      setActionError(err instanceof Error ? err.message : 'Failed to delete folder');
     },
   });
 
@@ -212,6 +221,19 @@ export function ObjectStorageView({ connection, container, path, onNavigate }: O
             </div>
           </div>
         </div>
+
+        {/* Action Error */}
+        {actionError && (
+          <div className="px-4 py-2 border-b border-neutral-200 dark:border-white/8 flex items-center justify-between gap-2">
+            <span className="text-xs text-red-500 dark:text-red-400 break-all">{actionError}</span>
+            <button
+              onClick={() => setActionError(null)}
+              className="text-xs text-neutral-400 hover:text-neutral-600 dark:hover:text-neutral-300 shrink-0"
+            >
+              Dismiss
+            </button>
+          </div>
+        )}
 
         {/* Content */}
         <div className="flex-1 overflow-auto" onClick={() => setSelectedObject(null)}>

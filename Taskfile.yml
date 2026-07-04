@@ -3,30 +3,17 @@
 version: '3'
 
 tasks:
+  build:
+    cmds:
+      - npm run build
+      - go build -o bin/granite ./cmd/granite
+
+  run:
+    cmds:
+      - npm run build
+      - go run ./cmd/granite
+
   install:
     cmds:
-      - task: install-darwin
-      - task: install-windows      
-      
-  install-darwin:
-    platforms: [darwin]
-    cmds:      
-      - task: build
-      - cmd: mkdir -p ~/Applications
-      - cmd: rm -rf ~/Applications/Granite.app
-      - cmd: mv app/build/bin/Granite.app ~/Applications/
-
-  install-windows:
-    platforms: [windows]
-    cmds:
-      - task: build
-      - cmd: mkdir -p %LOCALAPPDATA%\Programs
-      - cmd: rm -f %LOCALAPPDATA%\Programs\Granite.exe
-      - cmd: mv app/build/bin/Granite.exe %LOCALAPPDATA%\Programs\
-
-  build:
-    dir: app
-    cmds:
-      - go install github.com/wailsapp/wails/v2/cmd/wails@latest
-      - wails build
-  
+      - npm run build
+      - go install ./cmd/granite

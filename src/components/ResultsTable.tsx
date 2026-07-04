@@ -44,10 +44,12 @@ function EditableCell({
   const [value, setValue] = useState(initialValue);
   const [isEditing, setIsEditing] = useState(false);
 
-  // Sync with external changes
-  useEffect(() => {
+  // Sync with external changes (adjust during render)
+  const [prevInitialValue, setPrevInitialValue] = useState(initialValue);
+  if (initialValue !== prevInitialValue) {
+    setPrevInitialValue(initialValue);
     setValue(initialValue);
-  }, [initialValue]);
+  }
 
   const onBlur = () => {
     setIsEditing(false);
