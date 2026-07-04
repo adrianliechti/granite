@@ -13,6 +13,16 @@ A lightweight database and object-storage browser. A single Go binary serves the
 
 ## Getting started
 
+### Homebrew (macOS)
+
+Install the Granite desktop app into `/Applications` via Homebrew Cask:
+
+```sh
+brew install --cask adrianliechti/tap/granite-app
+```
+
+### From source
+
 ```sh
 # build the frontend and run the server (opens your browser)
 task run
@@ -50,5 +60,7 @@ npm run dev            # Vite dev server, proxies API calls to :7777
 ## Build
 
 ```sh
-task build             # outputs bin/granite with the UI embedded
+task build        # outputs bin/granite with the UI embedded
+task run:app       # builds and launches the desktop app (Wails)
+task install:app   # builds and installs the desktop app to /Applications
 ```

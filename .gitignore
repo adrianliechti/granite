@@ -12,6 +12,9 @@ node_modules
 #dist-ssr
 *.local
 
+# Wails/goreleaser app build output
+dist/app/
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

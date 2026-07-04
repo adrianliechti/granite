@@ -1,0 +1,13 @@
+{
+  "$schema": "https://wails.io/schemas/config.v2.json",
+  "name": "Granite",
+  "outputfilename": "Granite",
+  "frontend:dir": "frontend",
+  "author": {
+    "name": "Adrian Liechti",
+    "email": "adrian@monobox.ch"
+  },
+  "info": {
+    "productName": "Granite"
+  }
+}
