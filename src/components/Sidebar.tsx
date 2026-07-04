@@ -1,19 +1,19 @@
 import { useState, useMemo } from 'react';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Plus, Trash2, Pencil, Database } from 'lucide-react';
+import { Plus, Trash2, Pencil, Database, Package } from 'lucide-react';
+import { useParams, useNavigate } from '@tanstack/react-router';
 import { useLiveQuery } from '@tanstack/react-db';
 import { connectionsCollection } from '../lib/collections';
-import { listDatabases, listTables, createDatabase, supportsCreateDatabase } from '../lib/adapters';
+import { encodePathSegments } from '../lib/adapters';
 import { ConnectionModal } from './ConnectionModal';
+import { CreateContainerModal } from './CreateContainerModal';
+import { DatabaseBrowser } from './DatabaseBrowser';
+import { ObjectStorageBrowser } from './ObjectStorageBrowser';
 import type { Connection } from '../types';
+import { isSQLConnection, isStorageConnection } from '../types';
 
 interface SidebarProps {
-  activeConnectionId: string | null;
-  activeDatabase: string | null;
-  activeTable: string | null;
-  onSelectConnection: (connectionId: string | null) => void;
-  onSelectDatabase: (database: string) => void;
-  onSelectTable: (table: string) => void;
+  showAddModal?: boolean;
+  onAddModalClose?: () => void;
 }
 
 const driverColors: Record<string, string> = {
@@ -22,196 +22,199 @@ const driverColors: Record<string, string> = {
   sqlite: 'text-purple-600 dark:text-purple-400',
   sqlserver: 'text-red-600 dark:text-red-400',
   oracle: 'text-orange-600 dark:text-orange-400',
+  // Storage providers
+  's3': 'text-orange-600 dark:text-orange-400',
+  'azure-blob': 'text-blue-600 dark:text-blue-400',
 };
 
-function formatTimestamp(date: string): string {
-  const d = new Date(date);
-  const now = new Date();
-  const isToday = d.toDateString() === now.toDateString();
-  
-  if (isToday) {
-    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-  }
-  return d.toLocaleDateString([], { month: 'short', day: 'numeric' });
-}
-
-function getStatusColor(isActive: boolean): string {
-  return isActive ? 'bg-blue-500' : 'bg-neutral-500';
-}
-
 export function Sidebar({
-  activeConnectionId,
-  activeDatabase,
-  activeTable,
-  onSelectConnection,
-  onSelectDatabase,
-  onSelectTable,
+  showAddModal = false,
+  onAddModalClose,
 }: SidebarProps) {
+  // Get route params from URL
+  const params = useParams({ strict: false });
+  const navigate = useNavigate();
+
+  // Navigation handlers
+  const onSelectConnection = (connId: string | null) => {
+    if (!connId) {
+      navigate({ to: '/' });
+    } else {
+      navigate({ to: `/${connId}` });
+    }
+  };
+
+  const onSelectDatabase = (connId: string, db: string) => {
+    navigate({ to: `/${connId}/${encodeURIComponent(db)}` });
+  };
+
+  const onSelectTable = (connId: string, db: string, tbl: string) => {
+    navigate({ to: `/${connId}/${encodeURIComponent(db)}/${encodeURIComponent(tbl)}` });
+  };
+
+  const onSelectContainer = (connId: string, cont: string) => {
+    navigate({ to: `/${connId}/container/${encodeURIComponent(cont)}` });
+  };
+
+  const onSelectPath = (connId: string, cont: string, path: string) => {
+    const normalizedPath = path.replace(/^\/+/, '');
+    navigate({ to: `/${connId}/container/${encodeURIComponent(cont)}/${encodePathSegments(normalizedPath)}` });
+  };
+
   const connections = useLiveQuery((q) =>
     q.from({ conn: connectionsCollection }).orderBy(({ conn }) => conn.createdAt, 'desc')
   );
 
-  const queryClient = useQueryClient();
   const [modalState, setModalState] = useState<{ open: boolean; connection?: Connection | null }>({ open: false });
-  const [createDbModal, setCreateDbModal] = useState<{ open: boolean; connectionId: string | null }>({ open: false, connectionId: null });
-  const [newDbName, setNewDbName] = useState('');
-  const [createDbError, setCreateDbError] = useState<string | null>(null);
-  const [isCreatingDb, setIsCreatingDb] = useState(false);
-  const [expanded, setExpanded] = useState<Set<string>>(new Set());
-
-  const activeConnection = (connections?.data ?? []).find((c) => c.id === activeConnectionId);
-
-  const { data: databases } = useQuery({
-    queryKey: ['databases', activeConnectionId],
-    queryFn: () =>
-      activeConnection && activeConnectionId
-        ? listDatabases(activeConnection.driver, activeConnection.dsn)
-        : [],
-    enabled: !!activeConnection && !!activeConnectionId,
-  });
-
-  const { data: tables } = useQuery({
-    queryKey: ['tables', activeConnectionId, activeDatabase],
-    queryFn: () =>
-      activeConnection && activeDatabase
-        ? listTables(activeConnection.driver, activeConnection.dsn, activeDatabase)
-        : [],
-    enabled: !!activeConnection && !!activeConnectionId && !!activeDatabase,
-  });
-
-  // Group connections by name
-  const groupedConnections = useMemo(() => {
-    const data = connections?.data ?? [];
-    const groups = new Map<string, typeof data>();
+  const [createContainerFor, setCreateContainerFor] = useState<Connection | null>(null);
+  // Manual expand/collapse overrides on top of route-driven expansion (true = open, false = closed)
+  const [overrides, setOverrides] = useState<Map<string, boolean>>(new Map());
+  
+  // Compute items that should be auto-expanded based on route params
+  const routeExpanded = useMemo(() => {
+    const keys = new Set<string>();
+    const connId = params.connectionId;
+    const database = params.database;
+    const container = params.container;
+    const path = params['_splat'] || '';
     
-    for (const conn of data) {
-      const existing = groups.get(conn.name) || [];
-      existing.push(conn);
-      groups.set(conn.name, existing);
+    if (!connId) return keys;
+    
+    // Always expand the active connection
+    keys.add(connId);
+    
+    // For database connections: expand active database
+    if (database) {
+      keys.add(`${connId}:${database}`);
     }
     
-    return Array.from(groups.entries()).map(([name, entries]) => ({
-      name,
-      entries,
-    }));
-  }, [connections?.data]);
+    // For storage connections: expand active container
+    if (container) {
+      keys.add(`container:${connId}:${container}`);
+    }
+    
+    // For storage: expand path segments if there's a path
+    if (container && path) {
+      const segments = path.split('/').filter(Boolean);
+      let currentPath = '';
+      for (const segment of segments) {
+        currentPath = currentPath ? `${currentPath}/${segment}` : segment;
+        // Don't expand the last segment if it's a file (no trailing /)
+        if (currentPath !== path.replace(/\/$/, '')) {
+          keys.add(`folder:${connId}:${container}:${currentPath}/`);
+        }
+      }
+    }
+    
+    return keys;
+  }, [params]);
+  
+  // When navigation newly expands a key, drop a stale manual collapse for it
+  // so the active route is never hidden (adjust during render)
+  const [prevRouteExpanded, setPrevRouteExpanded] = useState(routeExpanded);
+  if (routeExpanded !== prevRouteExpanded) {
+    setPrevRouteExpanded(routeExpanded);
+    const stale = [...routeExpanded].filter(
+      (key) => !prevRouteExpanded.has(key) && overrides.get(key) === false
+    );
+    if (stale.length > 0) {
+      setOverrides((prev) => {
+        const next = new Map(prev);
+        stale.forEach((key) => next.delete(key));
+        return next;
+      });
+    }
+  }
+
+  // Route-based expansion with manual overrides applied on top
+  const expanded = useMemo(() => {
+    const keys = new Set(routeExpanded);
+    for (const [key, open] of overrides) {
+      if (open) {
+        keys.add(key);
+      } else {
+        keys.delete(key);
+      }
+    }
+    return keys;
+  }, [routeExpanded, overrides]);
 
   const toggle = (key: string) => {
-    setExpanded((prev) => {
-      const next = new Set(prev);
-      if (next.has(key)) {
-        next.delete(key);
-      } else {
-        next.add(key);
-      }
-      return next;
-    });
+    const open = !expanded.has(key);
+    setOverrides((prev) => new Map(prev).set(key, open));
   };
 
-  const saveConnection = (conn: Omit<Connection, 'id' | 'createdAt'>) => {
+  // Sync the local collection after the modal has already persisted the
+  // connection on the server (write*, not insert/update, to avoid re-posting)
+  const saveConnection = async (conn: Connection): Promise<Connection> => {
     if (modalState.connection) {
-      // Edit existing connection
-      connectionsCollection.update(modalState.connection.id, (draft) => {
-        draft.name = conn.name;
-        draft.driver = conn.driver;
-        draft.dsn = conn.dsn;
-      });
+      connectionsCollection.utils.writeUpdate(conn);
     } else {
-      // Add new connection
-      const id = crypto.randomUUID();
-      connectionsCollection.insert({ ...conn, id, createdAt: new Date().toISOString() });
-      onSelectConnection(id);
-      setExpanded((prev) => new Set(prev).add(id));
+      connectionsCollection.utils.writeInsert(conn);
+      onSelectConnection(conn.id);
+      setOverrides((prev) => new Map(prev).set(conn.id, true));
     }
-    setModalState({ open: false });
+    return conn;
   };
 
-  const deleteConnection = (id: string) => {
+  const deleteConnection = async (id: string): Promise<void> => {
     connectionsCollection.delete(id);
-    if (activeConnectionId === id) {
+    if (params.connectionId === id) {
       onSelectConnection(null);
     }
   };
 
-  const handleCreateDatabase = async () => {
-    if (!activeConnection || !newDbName.trim()) return;
-    
-    setIsCreatingDb(true);
-    setCreateDbError(null);
-    
-    try {
-      await createDatabase(activeConnection.driver, activeConnection.dsn, newDbName.trim());
-      // Refresh databases list
-      await queryClient.invalidateQueries({ queryKey: ['databases', activeConnectionId] });
-      setCreateDbModal({ open: false, connectionId: null });
-      setNewDbName('');
-    } catch (err) {
-      setCreateDbError(err instanceof Error ? err.message : 'Failed to create database');
-    } finally {
-      setIsCreatingDb(false);
+  // Get connection label based on type
+  const getConnectionLabel = (conn: Connection): string => {
+    if (isSQLConnection(conn) && conn.sql) {
+      switch (conn.sql.driver) {
+        case 'postgres': return 'PG';
+        case 'mysql': return 'MY';
+        case 'sqlserver': return 'MS';
+        case 'oracle': return 'OR';
+        case 'sqlite': return 'SQ';
+        default: return 'DB';
+      }
+    } else if (conn.amazonS3) {
+      return 'S3';
+    } else if (conn.azureBlob) {
+      return 'AZ';
     }
+    return '??';
+  };
+
+  // Get color class for connection type
+  const getConnectionColor = (conn: Connection): string => {
+    if (isSQLConnection(conn) && conn.sql) {
+      return driverColors[conn.sql.driver] || 'text-neutral-500';
+    } else if (conn.amazonS3) {
+      return driverColors['s3'] || 'text-neutral-500';
+    } else if (conn.azureBlob) {
+      return driverColors['azure-blob'] || 'text-neutral-500';
+    }
+    return 'text-neutral-500';
   };
 
   return (
     <>
       {/* Connection Modal */}
-      {modalState.open && (
+      {(modalState.open || showAddModal) && (
         <ConnectionModal
           connection={modalState.connection}
           onSave={saveConnection}
-          onClose={() => setModalState({ open: false })}
+          onClose={() => {
+            setModalState({ open: false });
+            onAddModalClose?.();
+          }}
         />
       )}
 
-      {/* Create Database Modal */}
-      {createDbModal.open && activeConnection && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-          <div className="bg-white dark:bg-[#1a1a1a] rounded-xl border border-neutral-200 dark:border-white/10 p-4 w-80 shadow-xl">
-            <div className="flex items-center gap-2 mb-4">
-              <Database className="w-5 h-5 text-blue-500" />
-              <h2 className="text-sm font-semibold text-neutral-700 dark:text-neutral-200">Create Database</h2>
-            </div>
-            <input
-              type="text"
-              value={newDbName}
-              onChange={(e) => setNewDbName(e.target.value)}
-              placeholder="Database name"
-              className="w-full px-3 py-2 text-sm rounded-lg border border-neutral-200 dark:border-white/10 bg-neutral-50 dark:bg-white/5 text-neutral-700 dark:text-neutral-200 placeholder-neutral-400 dark:placeholder-neutral-500 focus:outline-none focus:ring-2 focus:ring-blue-500/50"
-              autoFocus
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && newDbName.trim()) {
-                  handleCreateDatabase();
-                } else if (e.key === 'Escape') {
-                  setCreateDbModal({ open: false, connectionId: null });
-                  setNewDbName('');
-                  setCreateDbError(null);
-                }
-              }}
-            />
-            {createDbError && (
-              <p className="mt-2 text-xs text-red-500">{createDbError}</p>
-            )}
-            <div className="flex items-center justify-end gap-2 mt-4">
-              <button
-                onClick={() => {
-                  setCreateDbModal({ open: false, connectionId: null });
-                  setNewDbName('');
-                  setCreateDbError(null);
-                }}
-                className="px-3 py-1.5 text-xs rounded-lg text-neutral-600 dark:text-neutral-400 hover:bg-neutral-100 dark:hover:bg-white/5 transition-colors"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleCreateDatabase}
-                disabled={isCreatingDb || !newDbName.trim()}
-                className="px-3 py-1.5 text-xs rounded-lg bg-blue-500 text-white hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-              >
-                {isCreatingDb ? 'Creating...' : 'Create'}
-              </button>
-            </div>
-          </div>
-        </div>
+      {/* Create Container Modal */}
+      {createContainerFor && (
+        <CreateContainerModal
+          connection={createContainerFor}
+          onClose={() => setCreateContainerFor(null)}
+        />
       )}
 
       <aside className="w-64 bg-white dark:bg-[#1a1a1a]/60 dark:backdrop-blur-xl border border-neutral-200 dark:border-white/8 rounded-xl flex flex-col overflow-hidden dark:shadow-2xl">
@@ -236,41 +239,34 @@ export function Sidebar({
               No connections yet
             </div>
           ) : (
-            <div className="space-y-3 pb-2">
-              {groupedConnections.map((group) => (
-                <div key={group.name}>
-                  {/* Group Header */}
-                  <div className="px-2 py-1 text-[10px] font-medium text-neutral-400 dark:text-neutral-500 uppercase tracking-wider truncate">
-                    {group.name}
-                  </div>
-
-                  {/* Connection Items */}
-                  <div className="space-y-0.5">
-                    {group.entries.map((conn) => {
-                      const isActive = activeConnectionId === conn.id;
+            <div className="space-y-0.5 pb-2">
+              {(connections?.data ?? []).map((conn) => {
                       const isExpanded = expanded.has(conn.id);
+                      const isDatabase = isSQLConnection(conn);
+                      const isStorage = isStorageConnection(conn);
 
                       return (
-                      <div key={conn.id}>
-                        <div
-                          className="group flex items-center gap-2 px-3 py-1.5 rounded-lg hover:bg-neutral-100 dark:hover:bg-white/5 cursor-pointer transition-colors"
-                          onClick={() => {
-                            onSelectConnection(conn.id);
-                            toggle(conn.id);
-                          }}
-                        >
-                          <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${getStatusColor(isActive)}`} />
-                          <span className={`text-[10px] font-semibold shrink-0 uppercase ${driverColors[conn.driver] || 'text-neutral-500'}`}>
-                            {conn.driver === 'postgres' ? 'PG' : conn.driver === 'mysql' ? 'MY' : conn.driver === 'sqlserver' ? 'MS' : conn.driver === 'oracle' ? 'OR' : 'SQ'}
-                          </span>
-                          <span className="text-xs text-neutral-500 dark:text-neutral-400 truncate flex-1">
-                            {conn.dsn.split('@').pop()?.split('/')[0] || conn.dsn.slice(0, 20)}
-                          </span>
-                          <div className="flex items-center justify-end text-[10px] text-neutral-400 dark:text-neutral-600 shrink-0 w-16 h-5">
-                            <span className="group-hover:hidden">
-                              {formatTimestamp(conn.createdAt)}
+                        <div key={conn.id}>
+                          {/* Connection Row */}
+                          <div
+                            className="group flex items-center gap-2 px-3 py-1.5 rounded-lg hover:bg-neutral-100 dark:hover:bg-white/5 cursor-pointer transition-colors"
+                            onClick={() => {
+                              onSelectConnection(conn.id);
+                              toggle(conn.id);
+                            }}
+                          >
+                            {isDatabase ? (
+                              <Database className={`w-3 h-3 shrink-0 ${getConnectionColor(conn)}`} />
+                            ) : (
+                              <Package className={`w-3 h-3 shrink-0 ${getConnectionColor(conn)}`} />
+                            )}
+                            <span className={`text-[10px] font-semibold shrink-0 uppercase ${getConnectionColor(conn)}`}>
+                              {getConnectionLabel(conn)}
                             </span>
-                            <div className="hidden group-hover:flex items-center gap-0.5">
+                            <span className="text-xs text-neutral-500 dark:text-neutral-400 truncate flex-1">
+                              {conn.name}
+                            </span>
+                            <div className="flex items-center gap-0.5">
                               <button
                                 onClick={(e) => {
                                   e.stopPropagation();
@@ -293,89 +289,38 @@ export function Sidebar({
                               </button>
                             </div>
                           </div>
+
+                          {/* Nested Browser - Database */}
+                          {isExpanded && isDatabase && (
+                            <div className="ml-4">
+                              <DatabaseBrowser
+                                connection={conn}
+                                expanded={expanded}
+                                onToggle={toggle}
+                                onSelectDatabase={(db) => onSelectDatabase(conn.id, db)}
+                                onSelectTable={(db, tbl) => onSelectTable(conn.id, db, tbl)}
+                              />
+                            </div>
+                          )}
+
+                          {/* Nested Browser - Storage */}
+                          {isExpanded && isStorage && (
+                            <div className="ml-4">
+                              <ObjectStorageBrowser
+                                connection={conn}
+                                expanded={expanded}
+                                onToggle={toggle}
+                                onSelectContainer={(container) => onSelectContainer(conn.id, container)}
+                                onSelectPath={(container, path) => onSelectPath(conn.id, container, path)}
+                                onCreateContainer={() => setCreateContainerFor(conn)}
+                              />
+                            </div>
+                          )}
                         </div>
-
-                        {/* Databases (nested) */}
-                        {isExpanded && isActive && databases && (
-                          <div className="ml-4 space-y-0.5">
-                            {databases.map((db) => {
-                              const isDbActive = activeDatabase === db;
-                              const isDbExpanded = expanded.has(`${conn.id}:${db}`);
-
-                              return (
-                                <div key={db}>
-                                  <div
-                                    className="group flex items-center gap-2 px-3 py-1.5 rounded-lg hover:bg-neutral-100 dark:hover:bg-white/5 cursor-pointer transition-colors"
-                                    onClick={() => {
-                                      toggle(`${conn.id}:${db}`);
-                                      onSelectDatabase(db);
-                                    }}
-                                  >
-                                    <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${isDbActive ? 'bg-blue-500' : 'bg-neutral-400'}`} />
-                                    <span className="text-xs text-neutral-500 dark:text-neutral-400 truncate flex-1">
-                                      {db}
-                                    </span>
-                                  </div>
-
-                                  {/* Tables (nested) */}
-                                  {isDbExpanded && isDbActive && tables && (
-                                    <div className="ml-4 space-y-0.5">
-                                      {tables.map((table) => (
-                                        <div
-                                          key={table}
-                                          className={`group flex items-center gap-2 px-3 py-1.5 rounded-lg cursor-pointer transition-colors ${
-                                            activeTable === table
-                                              ? 'bg-blue-500/10 dark:bg-blue-500/20'
-                                              : 'hover:bg-neutral-100 dark:hover:bg-white/5'
-                                          }`}
-                                          onClick={() => onSelectTable(table)}
-                                        >
-                                          <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${activeTable === table ? 'bg-blue-500' : 'bg-neutral-400'}`} />
-                                          <span className={`text-xs truncate flex-1 ${activeTable === table ? 'text-blue-600 dark:text-blue-400' : 'text-neutral-500 dark:text-neutral-400'}`}>
-                                            {table}
-                                          </span>
-                                        </div>
-                                      ))}
-                                      {tables.length === 0 && (
-                                        <div className="px-3 py-1.5 text-xs text-neutral-400 dark:text-neutral-600">
-                                          No tables
-                                        </div>
-                                      )}
-                                    </div>
-                                  )}
-                                </div>
-                              );
-                            })}
-                            {databases.length === 0 && (
-                              <div className="px-3 py-1.5 text-xs text-neutral-400 dark:text-neutral-600">
-                                No databases
-                              </div>
-                            )}
-                            {/* Create Database Button */}
-                            {supportsCreateDatabase(conn.driver) && (
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  setCreateDbModal({ open: true, connectionId: conn.id });
-                                }}
-                                className="flex items-center gap-2 px-3 py-1.5 w-full rounded-lg hover:bg-neutral-100 dark:hover:bg-white/5 cursor-pointer transition-colors text-left"
-                              >
-                                <Plus className="w-3 h-3 text-neutral-400 dark:text-neutral-500" />
-                                <span className="text-xs text-neutral-400 dark:text-neutral-500">
-                                  New database
-                                </span>
-                              </button>
-                            )}
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
+                      );
+                    })}
+            </div>
+          )}
         </div>
       </aside>
     </>

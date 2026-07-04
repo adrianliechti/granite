@@ -13,6 +13,7 @@ import type { SQLResponse } from '../types';
 
 // Extend TanStack Table's TableMeta to include our updateData function
 declare module '@tanstack/react-table' {
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   interface TableMeta<TData extends RowData> {
     updateData: (rowIndex: number, columnId: string, value: unknown) => void;
   }
@@ -43,10 +44,12 @@ function EditableCell({
   const [value, setValue] = useState(initialValue);
   const [isEditing, setIsEditing] = useState(false);
 
-  // Sync with external changes
-  useEffect(() => {
+  // Sync with external changes (adjust during render)
+  const [prevInitialValue, setPrevInitialValue] = useState(initialValue);
+  if (initialValue !== prevInitialValue) {
+    setPrevInitialValue(initialValue);
     setValue(initialValue);
-  }, [initialValue]);
+  }
 
   const onBlur = () => {
     setIsEditing(false);

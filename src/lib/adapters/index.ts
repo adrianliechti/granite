@@ -8,6 +8,10 @@ import { oracleAdapter } from './oracle';
 // Re-export types
 export type { DatabaseAdapter, Driver, ColumnInfo, TableView } from './types';
 export type { QueryResult } from './types';
+export { sqlLiteral } from './types';
+
+// Re-export storage utilities
+export * from './storage';
 
 // Adapter registry
 const adapters: Record<Driver, DatabaseAdapter> = {
@@ -28,11 +32,11 @@ export function getAdapter(driver: string): DatabaseAdapter {
 }
 
 // Execute a query via the backend API (for SELECT-like queries that return rows)
-export async function executeQuery(driver: string, dsn: string, query: string): Promise<QueryResult> {
-  const response = await fetch('/sql/query', {
+export async function executeQuery(connectionId: string, query: string, database?: string): Promise<QueryResult> {
+  const response = await fetch(`/sql/${encodeURIComponent(connectionId)}/query`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ driver, dsn, query, params: [] }),
+    body: JSON.stringify({ query, params: [], database }),
   });
   
   if (!response.ok) {
@@ -44,11 +48,11 @@ export async function executeQuery(driver: string, dsn: string, query: string): 
 }
 
 // Execute a statement via the backend API (for INSERT/UPDATE/DELETE that modify data)
-export async function executeStatement(driver: string, dsn: string, query: string): Promise<QueryResult> {
-  const response = await fetch('/sql/execute', {
+export async function executeStatement(connectionId: string, query: string, database?: string): Promise<QueryResult> {
+  const response = await fetch(`/sql/${encodeURIComponent(connectionId)}/execute`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ driver, dsn, query, params: [] }),
+    body: JSON.stringify({ query, params: [], database }),
   });
   
   if (!response.ok) {
@@ -70,39 +74,37 @@ function isSelectQuery(query: string): boolean {
 }
 
 // Execute SQL - automatically chooses between query and execute endpoints
-export async function executeSQL(driver: string, dsn: string, query: string): Promise<QueryResult> {
+export async function executeSQL(connectionId: string, query: string, database?: string): Promise<QueryResult> {
   if (isSelectQuery(query)) {
-    return executeQuery(driver, dsn, query);
+    return executeQuery(connectionId, query, database);
   }
-  return executeStatement(driver, dsn, query);
+  return executeStatement(connectionId, query, database);
 }
 
 // High-level API functions that use the adapters
 
-export async function listDatabases(driver: string, dsn: string): Promise<string[]> {
+export async function listDatabases(connectionId: string, driver: string): Promise<string[]> {
   const adapter = getAdapter(driver);
   const query = adapter.listDatabasesQuery();
-  const data = await executeQuery(driver, dsn, query);
+  const data = await executeQuery(connectionId, query);
   return adapter.parseDatabaseNames(data.rows || []);
 }
 
-export async function listTables(driver: string, dsn: string, database?: string): Promise<string[]> {
+export async function listTables(connectionId: string, driver: string, database?: string): Promise<string[]> {
   const adapter = getAdapter(driver);
   
-  // Modify DSN to connect to specific database if provided
-  const modifiedDsn = database ? adapter.modifyDsnForDatabase(dsn, database) : dsn;
   const query = adapter.listTablesQuery();
   
-  const data = await executeQuery(driver, modifiedDsn, query);
+  const data = await executeQuery(connectionId, query, database);
   
   return adapter.parseTableNames(data.rows || [], database);
 }
 
-export async function listColumns(driver: string, dsn: string, table: string): Promise<ColumnInfo[]> {
+export async function listColumns(connectionId: string, driver: string, table: string, database?: string): Promise<ColumnInfo[]> {
   const adapter = getAdapter(driver);
   const query = adapter.listColumnsQuery(table);
   
-  const data = await executeQuery(driver, dsn, query);
+  const data = await executeQuery(connectionId, query, database);
   
   return adapter.parseColumns(data.rows || []);
 }
@@ -113,8 +115,18 @@ export function selectAllQuery(table: string, driver: string, limit = 100): stri
   return adapter.selectAllQuery(table, limit);
 }
 
+// Quote an identifier (table/column name) for the given driver
+export function quoteIdentifier(driver: string, name: string): string {
+  return getAdapter(driver).quoteIdentifier(name);
+}
+
+// Cheap connectivity-test query for the given driver
+export function pingQuery(driver: string): string {
+  return getAdapter(driver).pingQuery();
+}
+
 // Create a new database
-export async function createDatabase(driver: string, dsn: string, name: string): Promise<void> {
+export async function createDatabase(connectionId: string, driver: string, name: string): Promise<void> {
   const adapter = getAdapter(driver);
   const query = adapter.createDatabaseQuery(name);
   
@@ -122,7 +134,7 @@ export async function createDatabase(driver: string, dsn: string, name: string):
     throw new Error(`Creating databases is not supported for ${driver}`);
   }
   
-  await executeStatement(driver, dsn, query);
+  await executeStatement(connectionId, query);
 }
 
 // Check if the driver supports database creation

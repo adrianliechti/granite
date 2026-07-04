@@ -3,6 +3,14 @@ import type { DatabaseAdapter, ColumnInfo, TableView } from './types';
 export const sqliteAdapter: DatabaseAdapter = {
   driver: 'sqlite',
 
+  quoteIdentifier(name: string) {
+    return `"${name.replace(/"/g, '""')}"`;
+  },
+
+  pingQuery() {
+    return 'SELECT 1';
+  },
+
   supportedTableViews(): TableView[] {
     // SQLite has limited metadata support
     return ['records', 'columns', 'indexes'];
@@ -18,25 +26,20 @@ export const sqliteAdapter: DatabaseAdapter = {
   },
 
   listColumnsQuery(table: string) {
-    return `PRAGMA table_info(${table})`;
+    return `PRAGMA table_info(${this.quoteIdentifier(table)})`;
   },
 
   selectAllQuery(table: string, limit = 100) {
-    return `SELECT * FROM ${table} LIMIT ${limit}`;
+    return `SELECT * FROM ${this.quoteIdentifier(table)} LIMIT ${limit}`;
   },
 
-  createDatabaseQuery(_name: string) {
+  createDatabaseQuery() {
     // SQLite doesn't support creating databases - it's file-based
     return null;
   },
 
   listIndexesQuery(table: string) {
-    return `PRAGMA index_list(${table})`;
-  },
-
-  modifyDsnForDatabase(dsn: string, _database: string) {
-    // SQLite doesn't need DSN modification - it's file-based
-    return dsn;
+    return `PRAGMA index_list(${this.quoteIdentifier(table)})`;
   },
 
   parseDatabaseNames(rows) {

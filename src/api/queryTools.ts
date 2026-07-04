@@ -78,12 +78,6 @@ const runStatementDef = toolDefinition({
   inputSchema: runStatementSchema,
 });
 
-// Type aliases for tool inputs
-type SetQueryInput = z.infer<typeof setQuerySchema>;
-type ExecuteQueryInput = z.infer<typeof executeQuerySchema>;
-type RunQueryInput = z.infer<typeof runQuerySchema>;
-type RunStatementInput = z.infer<typeof runStatementSchema>;
-
 // Create client tool implementations
 export function createQueryTools(environment: QueryChatEnvironment) {
   const { queryResult, setters } = environment;
@@ -95,36 +89,32 @@ export function createQueryTools(environment: QueryChatEnvironment) {
     return formatQueryResult(queryResult);
   });
 
-  const setQuery = setQueryDef.client(async (args: unknown) => {
-    const input = args as SetQueryInput;
-    setters.setQuery(input.query);
-    return { success: true, query: input.query };
+  const setQuery = setQueryDef.client(async ({ query }) => {
+    setters.setQuery(query);
+    return { success: true, query };
   });
 
-  const executeQuery = executeQueryDef.client(async (args: unknown) => {
-    const input = args as ExecuteQueryInput;
+  const executeQuery = executeQueryDef.client(async ({ query }) => {
     try {
-      const response = await setters.executeQuery(input.query);
+      const response = await setters.executeQuery(query);
       return formatQueryResult(response);
     } catch (error) {
       return { error: error instanceof Error ? error.message : 'Query execution failed' };
     }
   });
 
-  const runQuery = runQueryDef.client(async (args: unknown) => {
-    const input = args as RunQueryInput;
+  const runQuery = runQueryDef.client(async ({ query }) => {
     try {
-      const response = await setters.runQuerySilent(input.query);
+      const response = await setters.runQuerySilent(query);
       return formatQueryResult(response);
     } catch (error) {
       return { error: error instanceof Error ? error.message : 'Query execution failed' };
     }
   });
 
-  const runStatement = runStatementDef.client(async (args: unknown) => {
-    const input = args as RunStatementInput;
+  const runStatement = runStatementDef.client(async ({ query }) => {
     try {
-      const response = await setters.runStatementSilent(input.query);
+      const response = await setters.runStatementSilent(query);
       return formatQueryResult(response);
     } catch (error) {
       return { error: error instanceof Error ? error.message : 'Statement execution failed' };
@@ -146,8 +136,8 @@ export function buildQueryInstructions(environment: QueryChatEnvironment): strin
   
   // Build current environment section
   const envLines: string[] = [];
-  if (connection) {
-    envLines.push(`- **Driver**: ${connection.driver}`);
+  if (connection && connection.sql) {
+    envLines.push(`- **Driver**: ${connection.sql.driver}`);
     envLines.push(`- **Database**: ${database || '(none selected)'}`);
     envLines.push(`- **Table**: ${table || '(none selected)'}`);
   } else {

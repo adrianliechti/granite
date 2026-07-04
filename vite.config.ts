@@ -1,41 +1,37 @@
 import { defineConfig } from 'vite'
-import react from '@vitejs/plugin-react'
+import react, { reactCompilerPreset } from '@vitejs/plugin-react'
+import babel from '@rolldown/plugin-babel'
 import tailwindcss from '@tailwindcss/vite'
-import path from 'path'
-import { createRequire } from 'module';
-
-const require = createRequire(import.meta.url);
 
 // https://vite.dev/config/
 export default defineConfig({
-  resolve: {
-    alias: [
-      { find: 'openai', replacement: path.resolve(__dirname, 'src/lib/openai-browser.ts') },
-      { find: 'openai-original', replacement: path.dirname(require.resolve('openai')) },
-    ],
-  },plugins: [
-    react({
-      babel: {
-        plugins: [['babel-plugin-react-compiler']],
-      },
-    }),
+  plugins: [
+    react(),
+    babel({ presets: [reactCompilerPreset()] }),
     tailwindcss(),
   ],
   server: {
     proxy: {
-      '/data': {
-        target: 'http://localhost:7777',
+      '/connections': {
+        target: 'http://127.0.0.1:7777',
         changeOrigin: true,
       },
       '/sql': {
         target: 'http://127.0.0.1:7777',
         changeOrigin: true,
       },
-      '/openai': {
-        target: 'http://localhost:8080',
+      '/storage': {
+        target: 'http://127.0.0.1:7777',
         changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/openai/, '')
-      }
+      },
+      '/openai': {
+        target: 'http://127.0.0.1:7777',
+        changeOrigin: true,
+      },
+      '/config.json': {
+        target: 'http://127.0.0.1:7777',
+        changeOrigin: true,
+      },
     },
   },
 })

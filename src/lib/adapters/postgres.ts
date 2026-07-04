@@ -1,7 +1,16 @@
 import type { DatabaseAdapter, ColumnInfo, TableView } from './types';
+import { sqlLiteral } from './types';
 
 export const postgresAdapter: DatabaseAdapter = {
   driver: 'postgres',
+
+  quoteIdentifier(name: string) {
+    return `"${name.replace(/"/g, '""')}"`;
+  },
+
+  pingQuery() {
+    return 'SELECT 1';
+  },
 
   supportedTableViews(): TableView[] {
     return ['records', 'columns', 'constraints', 'foreignKeys', 'indexes'];
@@ -17,24 +26,28 @@ export const postgresAdapter: DatabaseAdapter = {
 
   listColumnsQuery(table: string) {
     return `
-      SELECT 
+      SELECT
         column_name as name,
         data_type as type,
         is_nullable = 'YES' as nullable,
         COALESCE(
           (SELECT true FROM information_schema.table_constraints tc
-           JOIN information_schema.key_column_usage kcu ON tc.constraint_name = kcu.constraint_name
-           WHERE tc.table_name = c.table_name AND kcu.column_name = c.column_name AND tc.constraint_type = 'PRIMARY KEY'),
+           JOIN information_schema.key_column_usage kcu
+             ON tc.constraint_name = kcu.constraint_name
+             AND tc.constraint_schema = kcu.constraint_schema
+           WHERE tc.table_name = c.table_name AND tc.table_schema = c.table_schema
+             AND kcu.column_name = c.column_name AND tc.constraint_type = 'PRIMARY KEY'
+           LIMIT 1),
           false
         ) as primary_key
       FROM information_schema.columns c
-      WHERE table_name = '${table}' AND table_schema = 'public'
+      WHERE table_name = '${sqlLiteral(table)}' AND table_schema = 'public'
       ORDER BY ordinal_position
     `;
   },
 
   selectAllQuery(table: string, limit = 100) {
-    return `SELECT * FROM ${table} LIMIT ${limit}`;
+    return `SELECT * FROM ${this.quoteIdentifier(table)} LIMIT ${limit}`;
   },
 
   createDatabaseQuery(name: string) {
@@ -51,7 +64,7 @@ export const postgresAdapter: DatabaseAdapter = {
       LEFT JOIN information_schema.key_column_usage kcu 
         ON tc.constraint_name = kcu.constraint_name 
         AND tc.table_schema = kcu.table_schema
-      WHERE tc.table_name = '${table}' 
+      WHERE tc.table_name = '${sqlLiteral(table)}'
         AND tc.table_schema = 'public'
       ORDER BY tc.constraint_name, kcu.ordinal_position
     `;
@@ -69,7 +82,7 @@ export const postgresAdapter: DatabaseAdapter = {
         ON tc.constraint_name = kcu.constraint_name
       JOIN information_schema.constraint_column_usage ccu 
         ON tc.constraint_name = ccu.constraint_name
-      WHERE tc.table_name = '${table}' 
+      WHERE tc.table_name = '${sqlLiteral(table)}'
         AND tc.constraint_type = 'FOREIGN KEY'
         AND tc.table_schema = 'public'
       ORDER BY tc.constraint_name
@@ -82,17 +95,10 @@ export const postgresAdapter: DatabaseAdapter = {
         indexname AS index_name,
         indexdef AS definition
       FROM pg_indexes 
-      WHERE tablename = '${table}'
+      WHERE tablename = '${sqlLiteral(table)}'
         AND schemaname = 'public'
       ORDER BY indexname
     `;
-  },
-
-  modifyDsnForDatabase(dsn: string, database: string) {
-    // PostgreSQL DSN format: postgres://user:pass@host:port/dbname?params
-    const url = new URL(dsn);
-    url.pathname = `/${database}`;
-    return url.toString();
   },
 
   parseDatabaseNames(rows) {
