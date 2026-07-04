@@ -10,12 +10,18 @@ import { ObjectStorageView } from './components/ObjectStorageView';
 import { WelcomePage } from './components/WelcomePage';
 import { useLiveQuery } from '@tanstack/react-db';
 import { connectionsCollection } from './lib/collections';
-import { listTables, listColumns, selectAllQuery, executeSQL, executeQuery, executeStatement, getSupportedTableViews, getTableViewQuery, type ColumnInfo, type TableView } from './lib/adapters';
+import { listTables, listColumns, selectAllQuery, quoteIdentifier, sqlLiteral, encodePathSegments, executeSQL, executeQuery, executeStatement, getSupportedTableViews, getTableViewQuery, type ColumnInfo, type TableView } from './lib/adapters';
 import type { SQLResponse } from './types';
 import { isSQLConnection, isStorageConnection } from './types';
 import { getConfig } from './config';
 
 const queryClient = new QueryClient();
+
+async function executeSQLTimed(connectionId: string, sql: string, database?: string) {
+  const start = performance.now();
+  const response = await executeSQL(connectionId, sql, database);
+  return { response, duration: performance.now() - start };
+}
 
 function AppContent() {
   const params = useParams({ strict: false });
@@ -90,15 +96,14 @@ function AppContent() {
   const [activeView, setActiveView] = useState<TableView | null>('records');
 
   // Get supported tabs for the current driver
-  const supportedTabs = useMemo(() => {
-    if (!dbConnection?.sql) return ['records', 'columns'] as TableView[];
-    return getSupportedTableViews(dbConnection.sql.driver);
-  }, [dbConnection?.sql]);
+  const supportedTabs: TableView[] = dbConnection?.sql
+    ? getSupportedTableViews(dbConnection.sql.driver)
+    : ['records', 'columns'];
 
   // Clear active view when editor is expanded
-  const handleExpandEditor = useCallback(() => {
+  const handleExpandEditor = () => {
     setActiveView(null);
-  }, []);
+  };
 
   // AI chat panel state
   const [aiPanelOpen, setAiPanelOpen] = useState(false);
@@ -115,16 +120,7 @@ function AppContent() {
   const mutation = useMutation({
     mutationFn: async (sql: string) => {
       if (!dbConnection?.sql) throw new Error('No database connection selected');
-      const start = performance.now();
-
-      const response = await executeSQL(
-        dbConnection.id,
-        sql,
-        database
-      );
-
-      const duration = performance.now() - start;
-      return { response, duration };
+      return executeSQLTimed(dbConnection.id, sql, database);
     },
     onSuccess: (result) => {
       setQueryResult(result);
@@ -137,12 +133,13 @@ function AppContent() {
     },
   });
 
-  // Auto-load table data when table param changes
-  useEffect(() => {
+  // Sync editor state when the routed connection/table changes (adjust during render)
+  const routeKey = `${dbConnection?.id ?? ''}|${database ?? ''}|${table ?? ''}|${container ?? ''}`;
+  const [prevRouteKey, setPrevRouteKey] = useState<string | null>(null);
+  if (routeKey !== prevRouteKey) {
+    setPrevRouteKey(routeKey);
     if (dbConnection?.sql && table) {
-      const query = selectAllQuery(table, dbConnection.sql.driver);
-      setSql(query);
-      mutation.mutate(query);
+      setSql(selectAllQuery(table, dbConnection.sql.driver));
       setActiveView('records');
     } else if (!table && !container) {
       // Reset view when navigating to database/connection without table/container
@@ -150,29 +147,37 @@ function AppContent() {
       setQueryResult(null);
       setActiveView(null);
     }
+  }
+
+  // Auto-load table data when table param changes
+  useEffect(() => {
+    if (dbConnection?.sql && table) {
+      mutation.mutate(selectAllQuery(table, dbConnection.sql.driver));
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dbConnection?.id, dbConnection?.sql, table, container]);
+  }, [dbConnection?.id, database, table]);
 
   // Execute query and update UI, returns the response
-  const handleExecute = useCallback(async (sql: string): Promise<SQLResponse> => {
+  const handleExecute = async (sql: string): Promise<SQLResponse> => {
     setSql(sql);
     const result = await mutation.mutateAsync(sql);
     return result.response;
-  }, [mutation]);
+  };
 
   // Storage navigation handlers (used by ObjectStorageView)
   const handleStorageNavigate = useCallback((newContainer: string, newPath: string) => {
     if (!connectionId) return;
+    const container = encodeURIComponent(newContainer);
     const normalizedPath = newPath.replace(/^\/+/, '');
     if (normalizedPath) {
-      navigate({ to: `/${connectionId}/container/${newContainer}/${normalizedPath}` });
+      navigate({ to: `/${connectionId}/container/${container}/${encodePathSegments(normalizedPath)}` });
     } else {
-      navigate({ to: `/${connectionId}/container/${newContainer}` });
+      navigate({ to: `/${connectionId}/container/${container}` });
     }
   }, [navigate, connectionId]);
 
   // Handle view selection - fill and execute the appropriate query
-  const handleViewSelect = useCallback((view: TableView) => {
+  const handleViewSelect = (view: TableView) => {
     if (!dbConnection?.sql || !table) return;
     const query = getTableViewQuery(dbConnection.sql.driver, table, view);
     if (query) {
@@ -180,66 +185,78 @@ function AppContent() {
       mutation.mutate(query);
       setActiveView(view);
     }
-  }, [dbConnection, table, mutation]);
+  };
 
   // Format value for SQL
   const formatSqlValue = (val: unknown): string => {
     if (val === null) return 'NULL';
     if (typeof val === 'number') return String(val);
     if (typeof val === 'boolean') return val ? 'TRUE' : 'FALSE';
-    return `'${String(val).replace(/'/g, "''")}'`;
+    return `'${sqlLiteral(String(val))}'`;
+  };
+
+  // Resolve the primary key column for the routed table (fall back to first result column)
+  const getPrimaryKeyColumn = (): string | undefined => {
+    if (!table) return undefined;
+    return schema?.columns[table]?.find((c) => c.primaryKey)?.name
+      ?? queryResult?.response?.columns?.[0]
+      ?? 'id';
   };
 
   // Handle cell update - generates and executes UPDATE SQL
-  const handleUpdateCell = useCallback(async (
+  const handleUpdateCell = async (
     originalRow: Record<string, unknown>,
     columnId: string,
     newValue: unknown
   ) => {
-    if (!dbConnection || !table) return;
+    if (!dbConnection?.sql || !table) return;
 
-    const pkColumn = queryResult?.response?.columns?.[0] ?? 'id';
-    const pkValue = originalRow[pkColumn];
+    const pkColumn = getPrimaryKeyColumn();
+    const pkValue = pkColumn ? originalRow[pkColumn] : undefined;
 
-    if (pkValue === undefined) {
-      console.error('Cannot update: no primary key found');
+    if (pkColumn === undefined || pkValue === undefined || pkValue === null) {
+      console.error('Cannot update: no primary key value found');
       return;
     }
 
-    const sql = `UPDATE ${table} SET ${columnId} = ${formatSqlValue(newValue)} WHERE ${pkColumn} = ${formatSqlValue(pkValue)}`;
+    const driver = dbConnection.sql.driver;
+    const sql = `UPDATE ${quoteIdentifier(driver, table)} SET ${quoteIdentifier(driver, columnId)} = ${formatSqlValue(newValue)} WHERE ${quoteIdentifier(driver, pkColumn)} = ${formatSqlValue(pkValue)}`;
 
     try {
       await executeStatement(dbConnection.id, sql, database);
+      // Refresh so the grid reflects what the database actually stored
+      mutation.mutate(selectAllQuery(table, driver));
     } catch (error) {
       console.error('Update failed:', error);
     }
-  }, [dbConnection, table, queryResult?.response?.columns, database]);
+  };
 
   // Handle row delete - generates and executes DELETE SQL
-  const handleDeleteRow = useCallback(async (row: Record<string, unknown>) => {
+  const handleDeleteRow = async (row: Record<string, unknown>) => {
     if (!dbConnection?.sql || !table) return;
 
-    const pkColumn = queryResult?.response?.columns?.[0] ?? 'id';
-    const pkValue = row[pkColumn];
+    const pkColumn = getPrimaryKeyColumn();
+    const pkValue = pkColumn ? row[pkColumn] : undefined;
 
-    if (pkValue === undefined) {
-      console.error('Cannot delete: no primary key found');
+    if (pkColumn === undefined || pkValue === undefined || pkValue === null) {
+      console.error('Cannot delete: no primary key value found');
       return;
     }
 
-    const sql = `DELETE FROM ${table} WHERE ${pkColumn} = ${formatSqlValue(pkValue)}`;
+    const driver = dbConnection.sql.driver;
+    const sql = `DELETE FROM ${quoteIdentifier(driver, table)} WHERE ${quoteIdentifier(driver, pkColumn)} = ${formatSqlValue(pkValue)}`;
 
     try {
       await executeStatement(dbConnection.id, sql, database);
       // Refresh the table data
-      mutation.mutate(selectAllQuery(table, dbConnection.sql.driver));
+      mutation.mutate(selectAllQuery(table, driver));
     } catch (error) {
       console.error('Delete failed:', error);
     }
-  }, [dbConnection, table, queryResult?.response?.columns, mutation, database]);
+  };
 
   // Query setters for AI integration (database mode only)
-  const querySetters = useMemo(() => ({
+  const querySetters = {
     setQuery: setSql,
     executeQuery: handleExecute,
     runQuerySilent: async (sql: string) => {
@@ -250,7 +267,7 @@ function AppContent() {
       if (!dbConnection) throw new Error('No database connection selected');
       return executeStatement(dbConnection.id, sql, database);
     },
-  }), [handleExecute, dbConnection]);
+  };
 
   return (
     <div className="h-screen flex bg-neutral-50 dark:bg-[#0d0d0d] py-2 pr-2 pl-1 gap-2">
@@ -316,6 +333,7 @@ function AppContent() {
       {/* Main Content - Storage Mode */}
       {storageConnection && container && (
         <ObjectStorageView
+          key={`${storageConnection.id}:${container}`}
           connection={storageConnection}
           container={container}
           path={storagePath}

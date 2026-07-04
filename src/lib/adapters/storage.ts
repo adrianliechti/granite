@@ -1,7 +1,6 @@
-import type { 
-  Connection, 
-  StorageContainer, 
-  StorageObject, 
+import type {
+  StorageContainer,
+  StorageObject,
   StorageObjectDetails,
 } from '../../types';
 
@@ -168,57 +167,38 @@ export async function deletePrefix(
   container: string,
   prefix: string
 ): Promise<void> {
-  // First, list all objects with this prefix (without delimiter to get all nested objects)
-  const result = await listObjects(connectionId, container, { 
-    prefix, 
-    delimiter: '', // No delimiter means get all nested objects
-    maxKeys: 1000 
-  });
-  
-  if (result.objects.length === 0) {
-    return; // Nothing to delete
-  }
+  // Repeatedly list (flat, no delimiter) and delete until nothing is left
+  for (;;) {
+    const result = await listObjects(connectionId, container, {
+      prefix,
+      delimiter: '', // No delimiter means get all nested objects
+      maxKeys: 1000,
+    });
 
-  const keys = result.objects.map(obj => obj.key);
-  await deleteObjects(connectionId, container, keys);
-
-  // If there were more objects (truncated), recursively delete
-  if (result.isTruncated) {
-    await deletePrefix(connectionId, container, prefix);
-  }
-}
-
-// Test storage connection
-export async function testStorageConnection(connectionId: string): Promise<boolean> {
-  try {
-    await listContainers(connectionId);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-// Legacy function for testing unsaved connections - creates temp connection data
-export async function testStorageConnectionDirect(connection: Connection): Promise<boolean> {
-  // For testing unsaved connections, we need to call the test endpoint directly
-  // This requires a temporary approach since connection isn't saved yet
-  try {
-    // Create a temporary test by checking if the config is valid
-    if (connection.amazonS3) {
-      return !!connection.amazonS3.region && !!connection.amazonS3.accessKeyId && !!connection.amazonS3.secretAccessKey;
+    if (result.objects.length === 0) {
+      break;
     }
-    if (connection.azureBlob) {
-      return !!connection.azureBlob.accountName && (!!connection.azureBlob.accountKey || !!connection.azureBlob.connectionString);
+
+    await deleteObjects(connectionId, container, result.objects.map(obj => obj.key));
+
+    if (!result.isTruncated) {
+      break;
     }
-    return false;
-  } catch {
-    return false;
   }
+
+  // Delete the zero-byte folder-marker object itself, if one exists
+  // (created by "create folder" in consoles; listing skips it)
+  await deleteObjects(connectionId, container, [prefix]).catch(() => {});
 }
 
 // ============================================================================
 // Utility Functions
 // ============================================================================
+
+// Encode a slash-separated object path for use in a URL (keeps slashes)
+export function encodePathSegments(path: string): string {
+  return path.split('/').map(encodeURIComponent).join('/');
+}
 
 // Parse a path into container and prefix
 export function parseStoragePath(path: string): { container: string; prefix: string } {

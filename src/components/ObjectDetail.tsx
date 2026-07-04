@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { 
   File, 
@@ -37,7 +38,8 @@ const iconMap = {
 };
 
 export function ObjectDetail({ connection, container, objectKey, onClose }: ObjectDetailProps) {
-  
+  const [downloadError, setDownloadError] = useState<string | null>(null);
+
   const { data: details, isLoading, error } = useQuery({
     queryKey: ['storage-object-details', connection.id, container, objectKey],
     queryFn: () => getObjectDetails(connection.id, container, objectKey),
@@ -45,6 +47,7 @@ export function ObjectDetail({ connection, container, objectKey, onClose }: Obje
   });
 
   const handleDownload = async () => {
+    setDownloadError(null);
     try {
       const url = await getPresignedUrl(connection.id, container, objectKey);
       // Create a temporary anchor element to trigger download
@@ -57,7 +60,7 @@ export function ObjectDetail({ connection, container, objectKey, onClose }: Obje
       link.click();
       document.body.removeChild(link);
     } catch (err) {
-      console.error('Failed to get download URL:', err);
+      setDownloadError(err instanceof Error ? err.message : 'Failed to get download URL');
     }
   };
 
@@ -114,6 +117,9 @@ export function ObjectDetail({ connection, container, objectKey, onClose }: Obje
             </button>
           </div>
         </div>
+        {downloadError && (
+          <p className="mt-2 text-xs text-red-500 dark:text-red-400 break-all">{downloadError}</p>
+        )}
       </div>
 
       {/* Details */}

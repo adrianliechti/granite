@@ -1,7 +1,16 @@
 import type { DatabaseAdapter, ColumnInfo, TableView } from './types';
+import { sqlLiteral } from './types';
 
 export const oracleAdapter: DatabaseAdapter = {
   driver: 'oracle',
+
+  quoteIdentifier(name: string) {
+    return `"${name.replace(/"/g, '""')}"`;
+  },
+
+  pingQuery() {
+    return 'SELECT 1 FROM DUAL';
+  },
 
   supportedTableViews(): TableView[] {
     return ['records', 'columns', 'constraints', 'foreignKeys', 'indexes'];
@@ -42,16 +51,16 @@ export const oracleAdapter: DatabaseAdapter = {
         SELECT cc.column_name
         FROM user_constraints con
         JOIN user_cons_columns cc ON con.constraint_name = cc.constraint_name
-        WHERE con.table_name = UPPER('${table}') AND con.constraint_type = 'P'
+        WHERE con.table_name = '${sqlLiteral(table)}' AND con.constraint_type = 'P'
       ) cc ON c.column_name = cc.column_name
-      WHERE c.table_name = UPPER('${table}')
+      WHERE c.table_name = '${sqlLiteral(table)}'
       ORDER BY c.column_id
     `;
   },
 
   selectAllQuery(table: string, limit = 100) {
     // Oracle uses FETCH FIRST n ROWS ONLY (12c+) or ROWNUM
-    return `SELECT * FROM ${table} FETCH FIRST ${limit} ROWS ONLY`;
+    return `SELECT * FROM ${this.quoteIdentifier(table)} FETCH FIRST ${limit} ROWS ONLY`;
   },
 
   createDatabaseQuery() {
@@ -69,7 +78,7 @@ export const oracleAdapter: DatabaseAdapter = {
       FROM user_constraints con
       LEFT JOIN user_cons_columns col 
         ON con.constraint_name = col.constraint_name
-      WHERE con.table_name = UPPER('${table}')
+      WHERE con.table_name = '${sqlLiteral(table)}'
       ORDER BY con.constraint_name, col.position
     `;
   },
@@ -86,7 +95,7 @@ export const oracleAdapter: DatabaseAdapter = {
       JOIN user_constraints c_pk ON c.r_constraint_name = c_pk.constraint_name
       JOIN user_cons_columns b ON c_pk.constraint_name = b.constraint_name AND a.position = b.position
       WHERE c.constraint_type = 'R'
-        AND c.table_name = UPPER('${table}')
+        AND c.table_name = '${sqlLiteral(table)}'
       ORDER BY a.constraint_name
     `;
   },
@@ -98,7 +107,7 @@ export const oracleAdapter: DatabaseAdapter = {
         uniqueness,
         index_type
       FROM user_indexes
-      WHERE table_name = UPPER('${table}')
+      WHERE table_name = '${sqlLiteral(table)}'
       ORDER BY index_name
     `;
   },

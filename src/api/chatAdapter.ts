@@ -1,16 +1,17 @@
-// TanStack AI OpenAI adapter configured for browser with local proxy
-// The 'openai' module is aliased in vite.config.ts to inject dangerouslyAllowBrowser
-import { OpenAITextAdapter } from '@tanstack/ai-openai';
+// TanStack AI adapter for the local OpenAI-compatible proxy
+import { openaiCompatibleText } from '@tanstack/ai-openai/compatible';
 import { getConfig } from '../config';
 
 /**
- * Create an OpenAI chat adapter pointing to our local proxy.
- * Uses TanStack AI's OpenAITextAdapter directly since the openai module
- * is aliased to automatically inject dangerouslyAllowBrowser: true.
+ * Create a chat adapter pointing to our local OpenAI-compatible proxy.
+ * Uses the chat-completions API, which the proxy speaks.
  */
 export function createChatAdapter(model: string) {
-  const baseURL = `${window.location.origin}/openai/v1`;
-  return new OpenAITextAdapter({ apiKey: 'not-needed', baseURL }, model as 'gpt-5.1');
+  return openaiCompatibleText(model, {
+    baseURL: `${window.location.origin}/openai/v1`,
+    apiKey: 'not-needed',
+    dangerouslyAllowBrowser: true,
+  });
 }
 
 /**
@@ -19,4 +20,3 @@ export function createChatAdapter(model: string) {
 export function getConfiguredModel(): string {
   return getConfig().ai?.model || 'gpt-5.1';
 }
-

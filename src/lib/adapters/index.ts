@@ -8,6 +8,7 @@ import { oracleAdapter } from './oracle';
 // Re-export types
 export type { DatabaseAdapter, Driver, ColumnInfo, TableView } from './types';
 export type { QueryResult } from './types';
+export { sqlLiteral } from './types';
 
 // Re-export storage utilities
 export * from './storage';
@@ -112,6 +113,16 @@ export async function listColumns(connectionId: string, driver: string, table: s
 export function selectAllQuery(table: string, driver: string, limit = 100): string {
   const adapter = getAdapter(driver);
   return adapter.selectAllQuery(table, limit);
+}
+
+// Quote an identifier (table/column name) for the given driver
+export function quoteIdentifier(driver: string, name: string): string {
+  return getAdapter(driver).quoteIdentifier(name);
+}
+
+// Cheap connectivity-test query for the given driver
+export function pingQuery(driver: string): string {
+  return getAdapter(driver).pingQuery();
 }
 
 // Create a new database

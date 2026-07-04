@@ -6,21 +6,21 @@ export interface AppConfig {
   };
 }
 
-// Default configuration
-const defaultConfig: AppConfig = {
-  ai: {
-    model: 'gpt-4o',
-  },
-};
+let config: AppConfig = {};
 
-// Get the app config from window or use defaults
-export function getConfig(): AppConfig {
-  // Check if config is defined on window (can be set via index.html or env)
-  if (typeof window !== 'undefined' && (window as unknown as { __APP_CONFIG__?: AppConfig }).__APP_CONFIG__) {
-    return {
-      ...defaultConfig,
-      ...(window as unknown as { __APP_CONFIG__?: AppConfig }).__APP_CONFIG__,
-    };
+// Load the app config from the server. Called once at startup before rendering;
+// bounded so a hanging request can never block the app from booting.
+export async function loadConfig(): Promise<void> {
+  try {
+    const response = await fetch('/config.json', { signal: AbortSignal.timeout(5000) });
+    if (response.ok) {
+      config = await response.json();
+    }
+  } catch {
+    // No server config available - AI features stay disabled
   }
-  return defaultConfig;
+}
+
+export function getConfig(): AppConfig {
+  return config;
 }

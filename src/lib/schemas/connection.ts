@@ -30,15 +30,3 @@ export const azureFormSchema = z.object({
   { message: 'Either Account Key or Connection String is required', path: ['azureAccountKey'] }
 );
 
-// Storage form schema (discriminated by storageProvider)
-export const storageFormSchema = z.object({
-  category: z.literal('storage'),
-}).and(z.discriminatedUnion('storageProvider', [s3FormSchema, azureFormSchema]));
-
-// Combined schema - validates based on category
-export const connectionFormSchema = z.union([
-  databaseFormSchema,
-  storageFormSchema,
-]);
-
-export type ConnectionFormValues = z.infer<typeof connectionFormSchema>;

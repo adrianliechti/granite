@@ -1,75 +1,54 @@
-# React + TypeScript + Vite
+# Granite
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+A lightweight database and object-storage browser. A single Go binary serves the embedded React UI and bridges to your databases and storage accounts.
 
-Currently, two official plugins are available:
+## Features
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+- **SQL databases**: PostgreSQL, MySQL, SQL Server, Oracle, SQLite
+  - Query editor with Monaco, schema-aware autocompletion
+  - Browse databases, tables, and views; edit cells and delete rows inline
+- **Object storage**: Amazon S3 (and compatible), Azure Blob Storage
+  - Browse containers and objects, upload, download, preview, delete
+- **AI assistant** (optional): SQL chat assistant that can inspect results, write, and run queries
 
-## React Compiler
+## Getting started
 
-The React Compiler is enabled on this template. See [this documentation](https://react.dev/learn/react-compiler) for more information.
-
-Note: This will impact Vite dev & build performances.
-
-## Expanding the ESLint configuration
-
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
-
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
-
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```sh
+# build the frontend and run the server (opens your browser)
+task run
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+Or manually:
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+```sh
+npm install
+npm run build
+go run ./cmd/granite
+```
 
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+Connections are stored in `~/.local/share/granite`.
+
+## AI assistant
+
+Set OpenAI-compatible credentials before starting the server to enable the chat assistant:
+
+```sh
+export OPENAI_BASE_URL="https://api.openai.com/v1"   # or any OpenAI-compatible endpoint
+export OPENAI_API_KEY="sk-..."
+export OPENAI_MODEL="gpt-5.1"
+```
+
+The server proxies AI requests at `/openai/v1` and advertises the model to the UI via `/config.json`.
+
+## Development
+
+```sh
+go run ./cmd/granite   # backend on http://localhost:7777
+npm run dev            # Vite dev server, proxies API calls to :7777
+```
+
+## Build
+
+```sh
+task build             # outputs bin/granite with the UI embedded
 ```
