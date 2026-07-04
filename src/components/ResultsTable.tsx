@@ -6,9 +6,10 @@ import {
   flexRender,
   type ColumnDef,
   type SortingState,
+  type ColumnSizingState,
   type RowData,
 } from '@tanstack/react-table';
-import { ChevronUp, ChevronDown, ChevronsUpDown, AlertTriangle, Trash2 } from 'lucide-react';
+import { ChevronUp, ChevronDown, ChevronsUpDown, AlertTriangle, Trash2, Download } from 'lucide-react';
 import type { SQLResponse } from '../types';
 
 // Extend TanStack Table's TableMeta to include our updateData function
@@ -17,6 +18,32 @@ declare module '@tanstack/react-table' {
   interface TableMeta<TData extends RowData> {
     updateData: (rowIndex: number, columnId: string, value: unknown) => void;
   }
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  interface ColumnMeta<TData extends RowData, TValue> {
+    isNumeric?: boolean;
+  }
+}
+
+// Escape a value for embedding in a CSV cell
+function csvCell(value: unknown): string {
+  if (value === null || value === undefined) return '';
+  const str = typeof value === 'object' ? JSON.stringify(value) : String(value);
+  return /[",\n]/.test(str) ? `"${str.replace(/"/g, '""')}"` : str;
+}
+
+// Trigger a browser download of the current result set as CSV
+function downloadCSV(columns: string[], rows: Record<string, unknown>[], filename: string) {
+  const lines = [
+    columns.map(csvCell).join(','),
+    ...rows.map((row) => columns.map((col) => csvCell(row[col])).join(',')),
+  ];
+  const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  link.click();
+  URL.revokeObjectURL(url);
 }
 
 interface ResultsTableProps {
@@ -135,6 +162,7 @@ function ReadOnlyCell({ getValue }: { getValue: () => unknown }) {
 
 export function ResultsTable({ response, duration, isLoading, tableName, onUpdateCell, onDeleteRow }: ResultsTableProps) {
   const [sorting, setSorting] = useState<SortingState>([]);
+  const [columnSizing, setColumnSizing] = useState<ColumnSizingState>({});
   const [tableData, setTableData] = useState<Record<string, unknown>[]>([]);
   const [deleteConfirm, setDeleteConfirm] = useState<number | null>(null);
 
@@ -144,7 +172,22 @@ export function ResultsTable({ response, duration, isLoading, tableName, onUpdat
   // Sync tableData with response
   useEffect(() => {
     setTableData(response?.rows ?? []);
+    setColumnSizing({});
   }, [response?.rows]);
+
+  // Columns whose sampled values are all numeric - right-aligned for readability
+  const numericColumns = useMemo(() => {
+    const cols = new Set<string>();
+    if (!response?.columns || !response.rows?.length) return cols;
+
+    for (const col of response.columns) {
+      const sample = response.rows.slice(0, 50);
+      const hasValue = sample.some((row) => row[col] !== null && row[col] !== undefined);
+      const allNumeric = sample.every((row) => row[col] === null || row[col] === undefined || typeof row[col] === 'number');
+      if (hasValue && allNumeric) cols.add(col);
+    }
+    return cols;
+  }, [response?.columns, response?.rows]);
 
   const columns = useMemo<ColumnDef<Record<string, unknown>>[]>(() => {
     if (!response?.columns) return [];
@@ -153,6 +196,7 @@ export function ResultsTable({ response, duration, isLoading, tableName, onUpdat
       accessorKey: col,
       header: col,
       cell: canEdit ? EditableCell : ReadOnlyCell,
+      meta: { isNumeric: numericColumns.has(col) },
     }));
 
     // Add actions column if delete is enabled
@@ -201,14 +245,17 @@ export function ResultsTable({ response, duration, isLoading, tableName, onUpdat
     }
 
     return dataColumns;
-  }, [response?.columns, canEdit, canDelete, deleteConfirm, onDeleteRow]);
+  }, [response?.columns, canEdit, canDelete, deleteConfirm, onDeleteRow, numericColumns]);
 
   // eslint-disable-next-line react-hooks/incompatible-library -- TanStack Table returns non-memoizable functions by design
   const table = useReactTable({
     data: tableData,
     columns,
-    state: { sorting },
+    state: { sorting, columnSizing },
     onSortingChange: setSorting,
+    onColumnSizingChange: setColumnSizing,
+    columnResizeMode: 'onChange',
+    defaultColumn: { size: 160, minSize: 60, maxSize: 640 },
     getCoreRowModel: getCoreRowModel(),
     getSortedRowModel: getSortedRowModel(),
     meta: {
@@ -290,27 +337,31 @@ export function ResultsTable({ response, duration, isLoading, tableName, onUpdat
     <div className="flex flex-col h-full bg-white dark:bg-[#1a1a1a]/60 dark:backdrop-blur-xl border border-neutral-200 dark:border-white/8 rounded-xl overflow-hidden dark:shadow-2xl">
       {/* Table */}
       <div className="flex-1 overflow-auto">
-        <table className="w-full text-[13px]">
+        <table className="text-[13px]" style={{ width: table.getTotalSize(), minWidth: '100%' }}>
           <thead className="sticky top-0 z-10 bg-neutral-100 dark:bg-neutral-950">
             {table.getHeaderGroups().map((headerGroup) => (
               <tr key={headerGroup.id}>
                 {headerGroup.headers.map((header) => {
                   const isSorted = header.column.getIsSorted();
                   const isActionsCol = header.id === 'actions';
+                  const isNumeric = !!header.column.columnDef.meta?.isNumeric;
                   return (
                     <th
                       key={header.id}
-                      onClick={isActionsCol ? undefined : header.column.getToggleSortingHandler()}
-                      className={`text-left px-4 py-2 text-[11px] font-medium whitespace-nowrap transition-colors select-none group bg-neutral-100 dark:bg-neutral-950 ${
+                      style={{ width: header.getSize() }}
+                      className={`relative px-4 py-2 text-[11px] font-medium whitespace-nowrap transition-colors select-none group bg-neutral-100 dark:bg-neutral-950 ${
                         isActionsCol ? 'w-12' : 'cursor-pointer'
-                      } ${
+                      } ${isNumeric ? 'text-right' : 'text-left'} ${
                         isSorted
                           ? 'text-neutral-900 dark:text-neutral-200'
                           : 'text-neutral-500 dark:text-neutral-500 hover:text-neutral-700 dark:hover:text-neutral-400'
                       }`}
                     >
                       {!isActionsCol && (
-                        <div className="flex items-center gap-1">
+                        <div
+                          onClick={header.column.getToggleSortingHandler()}
+                          className={`flex items-center gap-1 ${isNumeric ? 'justify-end' : ''}`}
+                        >
                           {flexRender(header.column.columnDef.header, header.getContext())}
                           <span className={`transition-opacity ${isSorted ? 'opacity-100' : 'opacity-0 group-hover:opacity-40'}`}>
                             {isSorted === 'asc' ? (
@@ -322,6 +373,16 @@ export function ResultsTable({ response, duration, isLoading, tableName, onUpdat
                             )}
                           </span>
                         </div>
+                      )}
+                      {!isActionsCol && (
+                        <div
+                          onMouseDown={header.getResizeHandler()}
+                          onTouchStart={header.getResizeHandler()}
+                          onClick={(e) => e.stopPropagation()}
+                          className={`absolute top-0 right-0 h-full w-1.5 cursor-col-resize touch-none select-none ${
+                            header.column.getIsResizing() ? 'bg-blue-500' : 'hover:bg-blue-500/40'
+                          }`}
+                        />
                       )}
                     </th>
                   );
@@ -342,14 +403,18 @@ export function ResultsTable({ response, duration, isLoading, tableName, onUpdat
                       : 'hover:bg-neutral-200/50 dark:hover:bg-neutral-800/30'
                   }`}
                 >
-                  {visibleCells.map((cell, idx) => (
-                    <td
-                      key={cell.id}
-                      className={`px-4 py-2 whitespace-nowrap font-mono text-[12px] ${idx === 0 ? 'rounded-l-lg' : ''} ${idx === visibleCells.length - 1 ? 'rounded-r-lg' : ''}`}
-                    >
-                      {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                    </td>
-                  ))}
+                  {visibleCells.map((cell, idx) => {
+                    const isNumeric = !!cell.column.columnDef.meta?.isNumeric;
+                    return (
+                      <td
+                        key={cell.id}
+                        style={{ width: cell.column.getSize() }}
+                        className={`px-4 py-2 whitespace-nowrap overflow-hidden text-ellipsis font-mono text-[12px] ${idx === 0 ? 'rounded-l-lg' : ''} ${idx === visibleCells.length - 1 ? 'rounded-r-lg' : ''} ${isNumeric ? 'text-right tabular-nums' : 'text-left'}`}
+                      >
+                        {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                      </td>
+                    );
+                  })}
                 </tr>
               );
             })}
@@ -370,6 +435,18 @@ export function ResultsTable({ response, duration, isLoading, tableName, onUpdat
           <span className="text-neutral-400 dark:text-neutral-500">Rows:</span>
           <span className="text-neutral-700 dark:text-neutral-200 font-medium">{tableData.length}</span>
         </div>
+        <div className="flex items-center gap-2">
+          <span className="text-neutral-400 dark:text-neutral-500">Columns:</span>
+          <span className="text-neutral-700 dark:text-neutral-200 font-medium">{response.columns?.length ?? 0}</span>
+        </div>
+        <button
+          onClick={() => downloadCSV(response.columns ?? [], tableData, `${tableName ?? 'results'}.csv`)}
+          className="flex items-center gap-1.5 text-neutral-400 hover:text-neutral-700 dark:hover:text-neutral-300 transition-colors"
+          title="Export as CSV"
+        >
+          <Download size={12} />
+          Export CSV
+        </button>
         {canEdit && (
           <div className="ml-auto text-neutral-400 dark:text-neutral-600 text-[10px]">
             Click a cell to edit

@@ -1,9 +1,23 @@
 import { useState, useEffect, useRef } from 'react';
 import Editor, { type Monaco } from '@monaco-editor/react';
-import { Play, Sparkles, Table2, Columns3, ShieldCheck, Link, ListOrdered, ChevronDown, ChevronUp } from 'lucide-react';
-import type { Connection } from '../types';
+import { Play, Sparkles, Table2, Columns3, ShieldCheck, Link, ListOrdered, ChevronDown, ChevronUp, Wand2 } from 'lucide-react';
+import { format as formatSql, type SqlLanguage } from 'sql-formatter';
+import type { Connection, DatabaseDriver } from '../types';
 import type { ColumnInfo, TableView } from '../lib/adapters';
 import type { editor } from 'monaco-editor';
+
+// Map our driver names to sql-formatter dialects
+const driverLanguage: Record<DatabaseDriver, SqlLanguage> = {
+  postgres: 'postgresql',
+  mysql: 'mysql',
+  sqlite: 'sqlite',
+  sqlserver: 'transactsql',
+  oracle: 'plsql',
+};
+
+const MIN_EDITOR_HEIGHT = 160;
+const MAX_EDITOR_HEIGHT = 720;
+const DEFAULT_EDITOR_HEIGHT = 320;
 
 // Schema info for autocomplete
 export interface SchemaInfo {
@@ -52,9 +66,12 @@ const SQL_KEYWORDS = [
 
 export function QueryEditor({ connection, selectedTable, onExecute, isLoading, schema, value, onChange, onToggleAI, aiPanelOpen, supportedViews, onSelectView, activeView, onExpandEditor }: QueryEditorProps) {
   const [isCollapsed, setIsCollapsed] = useState(true);
+  const [editorHeight, setEditorHeight] = useState(DEFAULT_EDITOR_HEIGHT);
+  const [cursorPos, setCursorPos] = useState({ line: 1, column: 1 });
   const sql = value;
   const setSql = onChange;
   const monacoRef = useRef<Monaco | null>(null);
+  const editorRef = useRef<editor.IStandaloneCodeEditor | null>(null);
   const disposableRef = useRef<{ dispose: () => void } | null>(null);
   const schemaRef = useRef<SchemaInfo | undefined>(schema);
   
@@ -76,9 +93,14 @@ export function QueryEditor({ connection, selectedTable, onExecute, isLoading, s
   }, [schema]);
 
   // Register autocomplete provider when Monaco is ready or schema changes
-  const handleEditorMount = (_editor: editor.IStandaloneCodeEditor, monaco: Monaco) => {
+  const handleEditorMount = (editorInstance: editor.IStandaloneCodeEditor, monaco: Monaco) => {
     monacoRef.current = monaco;
-    
+    editorRef.current = editorInstance;
+
+    editorInstance.onDidChangeCursorPosition((e) => {
+      setCursorPos({ line: e.position.lineNumber, column: e.position.column });
+    });
+
     // Dispose previous completion provider if exists
     disposableRef.current?.dispose();
     
@@ -211,15 +233,51 @@ export function QueryEditor({ connection, selectedTable, onExecute, isLoading, s
     onExecute(sql);
   };
 
+  const handleFormat = () => {
+    if (!sql.trim()) return;
+    const language = connection?.sql?.driver ? driverLanguage[connection.sql.driver] : undefined;
+    try {
+      setSql(formatSql(sql, { language: language ?? 'sql', keywordCase: 'upper' }));
+    } catch {
+      // Leave the query untouched if it can't be parsed/formatted
+    }
+  };
+
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
       e.preventDefault();
       handleExecute();
     }
+    if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === 'f') {
+      e.preventDefault();
+      handleFormat();
+    }
+  };
+
+  // Drag-to-resize the editor pane from the handle below it
+  const handleResizeStart = (e: React.MouseEvent) => {
+    e.preventDefault();
+    const startY = e.clientY;
+    const startHeight = editorHeight;
+
+    const onMouseMove = (moveEvent: MouseEvent) => {
+      const next = startHeight + (moveEvent.clientY - startY);
+      setEditorHeight(Math.min(MAX_EDITOR_HEIGHT, Math.max(MIN_EDITOR_HEIGHT, next)));
+    };
+    const onMouseUp = () => {
+      window.removeEventListener('mousemove', onMouseMove);
+      window.removeEventListener('mouseup', onMouseUp);
+    };
+    window.addEventListener('mousemove', onMouseMove);
+    window.addEventListener('mouseup', onMouseUp);
   };
 
   return (
-    <div className={`flex flex-col bg-white dark:bg-[#1a1a1a]/60 dark:backdrop-blur-xl border border-neutral-200 dark:border-white/8 rounded-xl overflow-hidden dark:shadow-2xl transition-all ${isCollapsed ? '' : 'h-80'}`} onKeyDown={handleKeyDown}>
+    <div
+      className="flex flex-col bg-white dark:bg-[#1a1a1a]/60 dark:backdrop-blur-xl border border-neutral-200 dark:border-white/8 rounded-xl overflow-hidden dark:shadow-2xl"
+      style={isCollapsed ? undefined : { height: editorHeight }}
+      onKeyDown={handleKeyDown}
+    >
       {/* Toolbar */}
       <div className="h-12 px-3 flex items-center gap-3 border-b border-neutral-200 dark:border-white/8">
         {/* Collapse toggle */}
@@ -325,7 +383,14 @@ export function QueryEditor({ connection, selectedTable, onExecute, isLoading, s
               }}
             />
           </div>
-          
+
+          {/* Drag handle to resize the editor pane */}
+          <div
+            onMouseDown={handleResizeStart}
+            className="h-1 shrink-0 cursor-row-resize hover:bg-blue-500/40 transition-colors"
+            title="Drag to resize"
+          />
+
           {/* Bottom bar with Run button */}
           <div className="px-3 py-2 flex items-center gap-2 border-t border-neutral-200 dark:border-white/8">
             <button
@@ -337,6 +402,22 @@ export function QueryEditor({ connection, selectedTable, onExecute, isLoading, s
               {isLoading ? 'Running...' : 'Run'}
             </button>
             <span className="text-[10px] text-neutral-400 dark:text-neutral-600">⌘↵</span>
+
+            <button
+              onClick={handleFormat}
+              disabled={!sql.trim()}
+              className="flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium text-neutral-600 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-neutral-200 hover:bg-neutral-100 dark:hover:bg-white/5 rounded-md disabled:opacity-50 transition-colors"
+              title="Format SQL (⌘⇧F)"
+            >
+              <Wand2 className="w-3 h-3" />
+              Format
+            </button>
+
+            <div className="flex-1" />
+
+            <span className="text-[10px] text-neutral-400 dark:text-neutral-600 font-mono tabular-nums">
+              Ln {cursorPos.line}, Col {cursorPos.column}
+            </span>
           </div>
         </>
       )}

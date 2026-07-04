@@ -29,6 +29,7 @@
     "react-markdown": "^10.1.0",
     "remark-breaks": "^4.0.0",
     "remark-gfm": "^4.0.1",
+    "sql-formatter": "^15.8.2",
     "tailwindcss": "^4.1.18",
     "zod": "^4.4.3"
   },
