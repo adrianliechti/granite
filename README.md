@@ -60,7 +60,6 @@ npm run dev            # Vite dev server, proxies API calls to :7777
 ## Build
 
 ```sh
-task build        # outputs bin/granite with the UI embedded
-task run:app       # builds and launches the desktop app (Wails)
-task install:app   # builds and installs the desktop app to /Applications
+go build ./cmd/granite   # CLI with the UI embedded
+task install             # installs the CLI and the desktop app (~/Applications)
 ```
