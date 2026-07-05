@@ -1,24 +1,23 @@
-# Desktop app (Wails) release — separate from any future CLI release config
-# because the macOS .app bundle must be built natively on macOS (no
-# cross-compile) and ships as a Homebrew cask (into /Applications), not a
-# formula.
+# Desktop app release — the macOS .app bundle must be built natively on
+# macOS (cgo/Cocoa, no cross-compile) and ships as a Homebrew cask (into
+# /Applications), not a formula.
 #
-#   goreleaser release --clean -f .goreleaser.app.yml             # release
-#   goreleaser release --snapshot --clean -f .goreleaser.app.yml  # dry run
+#   goreleaser release --clean --skip=validate -f .goreleaser.app.yml             # release
+#   goreleaser release --snapshot --clean --skip=validate -f .goreleaser.app.yml  # dry run
 version: 2
 
 project_name: granite-app
-
-dist: dist/app
+# Outside the committed dist/ web assets — `go:embed all:dist` would otherwise
+# bake release artifacts into subsequent builds.
+dist: dist-app
 
 before:
   hooks:
     - npm ci
     - npm run build
-    # Pinned wails CLI (keep in sync with the Taskfile `run:app`/`install:app` tasks).
-    - sh -c 'cd app && go run github.com/wailsapp/wails/v2/cmd/wails@v2.12.0 build -platform darwin/arm64 -clean -trimpath'
+    - go tool appbundle -name Granite -id com.adrianliechti.granite -description "Granite - Database and Object-Storage Browser" -company "Adrian Liechti" -copyright "© Adrian Liechti" -package ./app -version {{ .Version }}
 
-# Wails builds the .app in the hooks above; GoReleaser builds no binaries.
+# The hooks above assemble the .app; GoReleaser builds no binaries.
 builds:
   - id: app
     skip: true
@@ -34,6 +33,7 @@ archives:
       - src: "app/build/bin/Granite.app/**/*"
         dst: "Granite.app/Contents"
 
+# Distinct name so it doesn't collide with a future CLI's checksums.txt on a shared release.
 checksum:
   name_template: "{{ .ProjectName }}_checksums.txt"
 
@@ -47,8 +47,8 @@ publishers:
       - GITHUB_TOKEN={{ .Env.GITHUB_TOKEN }}
     cmd: ./scripts/publish-cask.sh {{ .Version }}
 
-# append: land in an existing release for the tag (or create it), in case a
-# CLI release ever shares the same tag.
+# append: land in an existing release for the tag (or create it), so this
+# doesn't clash if another release flow (e.g. a future CLI pipeline) is added later.
 release:
   github:
     owner: adrianliechti
