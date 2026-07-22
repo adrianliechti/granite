@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useForm } from '@tanstack/react-form';
-import { Loader2, Database, Cloud } from 'lucide-react';
+import { Loader2, Database, Cloud, ChevronDown } from 'lucide-react';
 import type { Connection, DatabaseDriver, StorageProvider } from '../types';
 import { pingQuery } from '../lib/adapters';
 import { databaseFormSchema, s3FormSchema, azureFormSchema } from '../lib/schemas/connection';
@@ -19,14 +19,7 @@ const driverInfo: Record<DatabaseDriver, { label: string; placeholder: string }>
   sqlite: { label: 'SQLite', placeholder: '/path/to/database.db' },
   sqlserver: { label: 'SQL Server', placeholder: 'sqlserver://user:password@localhost:1433?database=mydb' },
   oracle: { label: 'Oracle', placeholder: 'oracle://user:password@localhost:1521/service_name' },
-};
-
-const driverStyles: Record<DatabaseDriver, { active: string; label: string }> = {
-  postgres: { active: 'bg-blue-500/10 border-blue-500/50 text-blue-600 dark:text-blue-400', label: 'PG' },
-  mysql: { active: 'bg-yellow-500/10 border-yellow-500/50 text-yellow-600 dark:text-yellow-400', label: 'MySQL' },
-  sqlite: { active: 'bg-purple-500/10 border-purple-500/50 text-purple-600 dark:text-purple-400', label: 'SQLite' },
-  sqlserver: { active: 'bg-red-500/10 border-red-500/50 text-red-600 dark:text-red-400', label: 'MSSQL' },
-  oracle: { active: 'bg-orange-500/10 border-orange-500/50 text-orange-600 dark:text-orange-400', label: 'Oracle' },
+  trino: { label: 'Trino', placeholder: 'http://user@localhost:8080?catalog=tpch&schema=tiny' },
 };
 
 const storageProviderInfo: Record<StorageProvider, { label: string; color: string }> = {
@@ -310,21 +303,19 @@ export function ConnectionModal({ connection, onSave, onClose }: ConnectionModal
                             <label className="block text-xs font-medium text-neutral-600 dark:text-neutral-400">
                               Database Type
                             </label>
-                            <div className="grid grid-cols-5 gap-1.5">
-                              {(Object.keys(driverInfo) as DatabaseDriver[]).map((key) => (
-                                <button
-                                  key={key}
-                                  type="button"
-                                  onClick={() => { field.handleChange(key); resetTestStatus(); }}
-                                  className={`px-2 py-2 text-[10px] font-semibold rounded-lg border transition-all ${
-                                    values.driver === key
-                                      ? driverStyles[key].active
-                                      : 'bg-neutral-50 dark:bg-white/5 border-neutral-200 dark:border-white/10 text-neutral-500 hover:bg-neutral-100 dark:hover:bg-white/10'
-                                  }`}
-                                >
-                                  {driverStyles[key].label}
-                                </button>
-                              ))}
+                            <div className="relative">
+                              <select
+                                value={field.state.value}
+                                onChange={(e) => { field.handleChange(e.target.value as DatabaseDriver); resetTestStatus(); }}
+                                className={`${inputClass} appearance-none pr-9 cursor-pointer`}
+                              >
+                                {(Object.keys(driverInfo) as DatabaseDriver[]).map((key) => (
+                                  <option key={key} value={key}>
+                                    {driverInfo[key].label}
+                                  </option>
+                                ))}
+                              </select>
+                              <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-neutral-400 pointer-events-none" />
                             </div>
                           </div>
                         )}
@@ -360,6 +351,7 @@ export function ConnectionModal({ connection, onSave, onClose }: ConnectionModal
                           </label>
                           <input
                             type="text"
+                            placeholder={driverInfo[values.driver].placeholder}
                             value={field.state.value}
                             onChange={(e) => { field.handleChange(e.target.value); resetTestStatus(); }}
                             onBlur={field.handleBlur}

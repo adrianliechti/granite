@@ -4,6 +4,7 @@ import { mysqlAdapter } from './mysql';
 import { sqliteAdapter } from './sqlite';
 import { sqlserverAdapter } from './sqlserver';
 import { oracleAdapter } from './oracle';
+import { trinoAdapter } from './trino';
 
 // Re-export types
 export type { DatabaseAdapter, Driver, ColumnInfo, TableView } from './types';
@@ -20,6 +21,7 @@ const adapters: Record<Driver, DatabaseAdapter> = {
   sqlite: sqliteAdapter,
   sqlserver: sqlserverAdapter,
   oracle: oracleAdapter,
+  trino: trinoAdapter,
 };
 
 // Get adapter for a driver

@@ -50,6 +50,21 @@ func modifyDSNForDatabase(driver, dsn, database string) string {
 	case "oracle":
 		// Oracle TNS or EZConnect format - typically doesn't switch databases this way
 		return dsn
+
+	case "trino":
+		// Trino DSN format: http[s]://user[:pass]@host:port?catalog=...&schema=...
+		// The database is addressed as "catalog.schema" (or a bare schema name)
+		if u, err := url.Parse(dsn); err == nil {
+			q := u.Query()
+			if catalog, schema, ok := strings.Cut(database, "."); ok {
+				q.Set("catalog", catalog)
+				q.Set("schema", schema)
+			} else {
+				q.Set("schema", database)
+			}
+			u.RawQuery = q.Encode()
+			return u.String()
+		}
 	}
 
 	return dsn

@@ -13,6 +13,7 @@ const driverLanguage: Record<DatabaseDriver, SqlLanguage> = {
   sqlite: 'sqlite',
   sqlserver: 'transactsql',
   oracle: 'plsql',
+  trino: 'trino',
 };
 
 const MIN_EDITOR_HEIGHT = 160;

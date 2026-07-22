@@ -37,7 +37,7 @@ type Connection struct {
 
 // SQLConfig contains SQL database connection configuration
 type SQLConfig struct {
-	Driver string `json:"driver"` // "postgres", "mysql", "sqlite", "sqlserver", "oracle"
+	Driver string `json:"driver"` // "postgres", "mysql", "sqlite", "sqlserver", "oracle", "trino"
 	DSN    string `json:"dsn"`
 }
 

@@ -4,7 +4,7 @@ import { z } from 'zod';
 export const databaseFormSchema = z.object({
   category: z.literal('database'),
   name: z.string().min(1, 'Connection name is required'),
-  driver: z.enum(['postgres', 'mysql', 'sqlite', 'sqlserver', 'oracle']),
+  driver: z.enum(['postgres', 'mysql', 'sqlite', 'sqlserver', 'oracle', 'trino']),
   dsn: z.string().min(1, 'Connection string is required'),
 });
 

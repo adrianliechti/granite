@@ -3,7 +3,7 @@
 // ============================================================================
 
 // Database driver types
-export type DatabaseDriver = 'postgres' | 'mysql' | 'sqlite' | 'sqlserver' | 'oracle';
+export type DatabaseDriver = 'postgres' | 'mysql' | 'sqlite' | 'sqlserver' | 'oracle' | 'trino';
 
 // Storage provider types
 export type StorageProvider = 's3' | 'azure-blob';
