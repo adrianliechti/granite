@@ -35,9 +35,6 @@ export function ChatPanel({
   const [input, setInput] = useState('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
-  
-  // Track connection ID changes to reset chat
-  const prevConnectionIdRef = useRef(connection?.id);
 
   // Create environment for tools
   const environment: QueryChatEnvironment = useMemo(() => ({
@@ -56,34 +53,42 @@ export function ChatPanel({
   // Build instructions with current environment
   const instructions = useMemo(() => buildQueryInstructions(environment), [environment]);
 
-  // Create connection adapter that wraps the chat() function
+  // useChat captures the connection when the chat client is built, so the
+  // chat() call must read the latest tools/instructions through refs — the
+  // refs are only dereferenced when the user sends a message, never during
+  // render.
+  const toolsRef = useRef(tools);
+  const instructionsRef = useRef(instructions);
+  useEffect(() => {
+    toolsRef.current = tools;
+    instructionsRef.current = instructions;
+  });
+
   const chatConnection = useMemo(() => {
     const model = getConfiguredModel();
     const adapter = createChatAdapter(model);
 
+    // The refs below are only dereferenced when the user sends a message —
+    // never during render — so reading them inside this callback is safe.
+    // eslint-disable-next-line react-hooks/refs
     return stream((messages) =>
       chat({
         adapter,
         messages,
-        tools,
-        systemPrompts: [instructions],
+        tools: toolsRef.current,
+        systemPrompts: [instructionsRef.current],
         agentLoopStrategy: maxIterations(10),
       })
     );
-  }, [tools, instructions]);
+  }, []);
 
+  // Keying the chat client by database connection makes useChat rebuild it
+  // (with a fresh message list) whenever the connection changes.
   const { messages, sendMessage, isLoading, stop, clear } = useChat({
+    id: `${queryAdapterConfig.id}/${connection?.id ?? ''}`,
     connection: chatConnection,
     tools,
   });
-
-  // Reset chat when connection ID changes
-  useEffect(() => {
-    if (prevConnectionIdRef.current !== connection?.id) {
-      clear();
-      prevConnectionIdRef.current = connection?.id;
-    }
-  }, [connection?.id, clear]);
 
   // Auto-scroll to bottom when messages change
   useEffect(() => {
