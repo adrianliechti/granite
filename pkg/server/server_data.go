@@ -90,6 +90,10 @@ func (s *Server) listConnections() ([]Connection, error) {
 }
 
 func getDataDir() string {
+	if dir := os.Getenv("GRANITE_DATA_DIR"); dir != "" {
+		return dir
+	}
+
 	home, err := os.UserHomeDir()
 
 	if err != nil {

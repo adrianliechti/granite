@@ -1,0 +1,67 @@
+Local database test services
+Run these commands from the repository root. Ports are bound to localhost.
+The credentials below are for these local test containers.
+
+PostgreSQL
+docker run -d --name granite-postgres -p 127.0.0.1:5432:5432 -e POSTGRES_USER=granite -e POSTGRES_PASSWORD=Granite_Test_2026 -e POSTGRES_DB=granite postgres:18
+postgres://granite:Granite_Test_2026@localhost:5432/granite?sslmode=disable
+
+MySQL
+docker run -d --name granite-mysql -p 127.0.0.1:3306:3306 -e MYSQL_ROOT_PASSWORD=Granite_Test_2026 -e MYSQL_ROOT_HOST=% -e MYSQL_DATABASE=granite mysql:8.4
+root:Granite_Test_2026@tcp(localhost:3306)/granite?parseTime=true
+
+SQL Server (the official image uses amd64, including on Apple Silicon)
+docker run -d --name granite-sqlserver --platform linux/amd64 -p 127.0.0.1:1433:1433 -e ACCEPT_EULA=Y -e MSSQL_SA_PASSWORD=Granite_Test_2026 -e MSSQL_PID=Developer -e MSSQL_MEMORY_LIMIT_MB=2048 mcr.microsoft.com/mssql/server:2022-latest
+sqlserver://sa:Granite_Test_2026@localhost:1433?database=master&encrypt=true&TrustServerCertificate=true
+On Apple Silicon, select Apple Virtualization framework and enable Rosetta in
+Docker Desktop's General settings, then restart Docker. This configuration runs
+the SQL Server image above; the QEMU emulator crashed with signal 11 (exit 139).
+
+Oracle Database Free
+docker run -d --name granite-oracle -p 127.0.0.1:1521:1521 -e ORACLE_PASSWORD=Granite_Test_2026 -e APP_USER=granite -e APP_USER_PASSWORD=Granite_Test_2026 gvenzl/oracle-free:23-slim-faststart
+granite/Granite_Test_2026@tcp://localhost:1521/FREEPDB1
+
+Trino (memory connector for writes, TPCH connector for sample data)
+docker run -d --name granite-trino -p 127.0.0.1:8080:8080 -v "$PWD/tests/docker/trino:/etc/trino:ro" trinodb/trino:483
+http://granite@localhost:8080?catalog=memory&schema=default
+Memory tables reset when Trino restarts.
+
+SQLite (embedded driver; no database server or Docker container is needed)
+/tmp/granite-e2e.sqlite
+
+Run the browser and database end-to-end tests (requires Node.js 22.18+):
+npm install
+npx playwright install chromium
+npm run build
+npm run test:e2e
+The tests create temporary tables/databases and use a separate connection directory.
+To test only the services that are available:
+GRANITE_E2E_DRIVERS=postgres,mysql,oracle,sqlite,trino npm run test:e2e
+
+Start the existing containers:
+docker start granite-postgres granite-mysql granite-sqlserver granite-oracle granite-trino
+
+Stop the services:
+docker stop granite-postgres granite-mysql granite-sqlserver granite-oracle granite-trino
+
+Object storage test services (local emulators)
+MinIO (S3 compatible)
+docker run -d --name granite-s3 -p 127.0.0.1:9000:9000 -e MINIO_ROOT_USER=granite -e MINIO_ROOT_PASSWORD=Granite_Test_2026 quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z server /data
+Type: Amazon S3 / S3 compatible
+Endpoint: http://127.0.0.1:9000
+Region: us-east-1
+Access key ID: granite
+Secret access key: Granite_Test_2026
+
+Azurite (Azure Blob)
+docker run -d --name granite-azurite -p 127.0.0.1:10000:10000 -e AZURITE_ACCOUNTS=granite:R3Jhbml0ZV9UZXN0XzIwMjY= mcr.microsoft.com/azure-storage/azurite:3.35.0 azurite-blob --blobHost 0.0.0.0 --skipApiVersionCheck
+Type: Azure Blob Storage
+Connection string: DefaultEndpointsProtocol=http;AccountName=granite;AccountKey=R3Jhbml0ZV9UZXN0XzIwMjY=;BlobEndpoint=http://127.0.0.1:10000/granite;
+The emulator skips API version checks for the current Azure SDK.
+
+Run real storage browser tests (creates and removes isolated test containers):
+npm run build
+npm run test:e2e:storage
+
+docker start granite-s3 granite-azurite
+docker stop granite-s3 granite-azurite

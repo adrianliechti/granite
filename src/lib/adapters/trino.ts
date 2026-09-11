@@ -1,5 +1,5 @@
 import type { DatabaseAdapter, ColumnInfo, TableView } from './types';
-import { sqlLiteral } from './types';
+import { sqlLiteral } from './types.ts';
 
 // Trino organizes tables as catalog.schema.table; Granite's single
 // "database" level maps to "catalog.schema" pairs

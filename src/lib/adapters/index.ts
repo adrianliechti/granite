@@ -1,18 +1,26 @@
-import type { DatabaseAdapter, Driver, ColumnInfo, QueryResult, TableView } from './types';
-import { postgresAdapter } from './postgres';
-import { mysqlAdapter } from './mysql';
-import { sqliteAdapter } from './sqlite';
-import { sqlserverAdapter } from './sqlserver';
-import { oracleAdapter } from './oracle';
-import { trinoAdapter } from './trino';
+import { returnsRows } from "../sql";
+import type {
+  DatabaseAdapter,
+  Driver,
+  ColumnInfo,
+  QueryResult,
+  TableView,
+} from "./types";
+import { postgresAdapter } from "./postgres";
+import { mysqlAdapter } from "./mysql";
+import { sqliteAdapter } from "./sqlite";
+import { sqlserverAdapter } from "./sqlserver";
+import { oracleAdapter } from "./oracle";
+import { trinoAdapter } from "./trino";
 
 // Re-export types
-export type { DatabaseAdapter, Driver, ColumnInfo, TableView } from './types';
-export type { QueryResult } from './types';
-export { sqlLiteral } from './types';
+export type { DatabaseAdapter, Driver, ColumnInfo, TableView } from "./types";
+export type { QueryResult } from "./types";
+export { sqlLiteral } from "./types";
+export { parameterPlaceholder, primaryKeyPredicate } from "./rows";
 
 // Re-export storage utilities
-export * from './storage';
+export * from "./storage";
 
 // Adapter registry
 const adapters: Record<Driver, DatabaseAdapter> = {
@@ -34,85 +42,157 @@ export function getAdapter(driver: string): DatabaseAdapter {
 }
 
 // Execute a query via the backend API (for SELECT-like queries that return rows)
-export async function executeQuery(connectionId: string, query: string, database?: string): Promise<QueryResult> {
-  const response = await fetch(`/sql/${encodeURIComponent(connectionId)}/query`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ query, params: [], database }),
-  });
-  
-  if (!response.ok) {
-    const data = await response.json().catch(() => ({}));
-    throw new Error(data.message || `HTTP error: ${response.status}`);
-  }
-  
-  return response.json();
+export async function executeQuery(
+  connectionId: string,
+  query: string,
+  database?: string,
+  params: unknown[] = [],
+  signal?: AbortSignal,
+  maxRows?: number,
+): Promise<QueryResult> {
+  return requestSQL(
+    "query",
+    connectionId,
+    query,
+    database,
+    params,
+    signal,
+    maxRows,
+  );
 }
 
 // Execute a statement via the backend API (for INSERT/UPDATE/DELETE that modify data)
-export async function executeStatement(connectionId: string, query: string, database?: string): Promise<QueryResult> {
-  const response = await fetch(`/sql/${encodeURIComponent(connectionId)}/execute`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ query, params: [], database }),
-  });
-  
+export async function executeStatement(
+  connectionId: string,
+  query: string,
+  database?: string,
+  params: unknown[] = [],
+  signal?: AbortSignal,
+): Promise<QueryResult> {
+  return requestSQL("execute", connectionId, query, database, params, signal);
+}
+
+async function requestSQL(
+  endpoint: "query" | "execute",
+  connectionId: string,
+  query: string,
+  database?: string,
+  params: unknown[] = [],
+  signal?: AbortSignal,
+  maxRows?: number,
+): Promise<QueryResult> {
+  const response = await fetch(
+    `/sql/${encodeURIComponent(connectionId)}/${endpoint}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ query, params, database, maxRows }),
+      signal,
+    },
+  );
+
   if (!response.ok) {
     const data = await response.json().catch(() => ({}));
     throw new Error(data.message || `HTTP error: ${response.status}`);
   }
-  
+
   return response.json();
 }
 
-// Determine if a SQL string is a query (returns rows) or a statement (modifies data)
-function isSelectQuery(query: string): boolean {
-  const q = query.trim().toUpperCase();
-  const queryPrefixes = ['SELECT', 'WITH', 'SHOW', 'DESCRIBE', 'EXPLAIN', 'PRAGMA'];
-  for (const prefix of queryPrefixes) {
-    if (q.startsWith(prefix)) return true;
-  }
-  return q.includes('RETURNING');
+export async function executeSQL(
+  connectionId: string,
+  query: string,
+  database?: string,
+  signal?: AbortSignal,
+  maxRows?: number,
+  driver?: Driver,
+): Promise<QueryResult> {
+  return returnsRows(query, driver)
+    ? executeQuery(connectionId, query, database, [], signal, maxRows)
+    : executeStatement(connectionId, query, database, [], signal);
 }
 
-// Execute SQL - automatically chooses between query and execute endpoints
-export async function executeSQL(connectionId: string, query: string, database?: string): Promise<QueryResult> {
-  if (isSelectQuery(query)) {
-    return executeQuery(connectionId, query, database);
-  }
-  return executeStatement(connectionId, query, database);
+export async function executeBatch(
+  connectionId: string,
+  queries: string[],
+  database: string | undefined,
+  signal: AbortSignal,
+  maxRows: number,
+  driver?: Driver,
+): Promise<QueryResult[]> {
+  const response = await fetch(
+    `/sql/${encodeURIComponent(connectionId)}/batch`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      signal,
+      body: JSON.stringify({
+        database,
+        maxRows,
+        statements: queries.map((query) => ({
+          query,
+          returnsRows: returnsRows(query, driver),
+        })),
+      }),
+    },
+  );
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.message || "Query failed");
+  return data;
 }
 
 // High-level API functions that use the adapters
 
-export async function listDatabases(connectionId: string, driver: string): Promise<string[]> {
+export async function listDatabases(
+  connectionId: string,
+  driver: string,
+): Promise<string[]> {
   const adapter = getAdapter(driver);
   const query = adapter.listDatabasesQuery();
   const data = await executeQuery(connectionId, query);
   return adapter.parseDatabaseNames(data.rows || []);
 }
 
-export async function listTables(connectionId: string, driver: string, database?: string): Promise<string[]> {
+export async function listTables(
+  connectionId: string,
+  driver: string,
+  database?: string,
+): Promise<string[]> {
   const adapter = getAdapter(driver);
-  
+
   const query = adapter.listTablesQuery();
-  
+
   const data = await executeQuery(connectionId, query, database);
-  
+
   return adapter.parseTableNames(data.rows || [], database);
 }
 
-export async function listColumns(connectionId: string, driver: string, table: string, database?: string): Promise<ColumnInfo[]> {
+export async function listColumns(
+  connectionId: string,
+  driver: string,
+  table: string,
+  database?: string,
+): Promise<ColumnInfo[]> {
   const adapter = getAdapter(driver);
   const query = adapter.listColumnsQuery(table);
-  
+
   const data = await executeQuery(connectionId, query, database);
-  
-  return adapter.parseColumns(data.rows || []);
+
+  return adapter
+    .parseColumns(data.rows || [])
+    .map((column) =>
+      driver === "oracle" && column.type === "DATE"
+        ? { ...column, type: "DATE (date & time)" }
+        : column,
+    );
 }
 
 // Generate a SELECT * query with driver-specific row limiting
-export function selectAllQuery(table: string, driver: string, limit = 100): string {
+export function selectAllQuery(
+  table: string,
+  driver: string,
+  limit = 100,
+): string {
   const adapter = getAdapter(driver);
   return adapter.selectAllQuery(table, limit);
 }
@@ -128,21 +208,25 @@ export function pingQuery(driver: string): string {
 }
 
 // Create a new database
-export async function createDatabase(connectionId: string, driver: string, name: string): Promise<void> {
+export async function createDatabase(
+  connectionId: string,
+  driver: string,
+  name: string,
+): Promise<void> {
   const adapter = getAdapter(driver);
   const query = adapter.createDatabaseQuery(name);
-  
+
   if (!query) {
     throw new Error(`Creating databases is not supported for ${driver}`);
   }
-  
+
   await executeStatement(connectionId, query);
 }
 
 // Check if the driver supports database creation
 export function supportsCreateDatabase(driver: string): boolean {
   const adapter = getAdapter(driver);
-  return adapter.createDatabaseQuery('test') !== null;
+  return adapter.createDatabaseQuery("test") !== null;
 }
 
 // Get supported table views for a driver
@@ -152,19 +236,23 @@ export function getSupportedTableViews(driver: string): TableView[] {
 }
 
 // Generate query for a specific table view
-export function getTableViewQuery(driver: string, table: string, view: TableView): string | null {
+export function getTableViewQuery(
+  driver: string,
+  table: string,
+  view: TableView,
+): string | null {
   const adapter = getAdapter(driver);
-  
+
   switch (view) {
-    case 'records':
+    case "records":
       return adapter.selectAllQuery(table);
-    case 'columns':
+    case "columns":
       return adapter.listColumnsQuery(table);
-    case 'constraints':
+    case "constraints":
       return adapter.listConstraintsQuery?.(table) ?? null;
-    case 'foreignKeys':
+    case "foreignKeys":
       return adapter.listForeignKeysQuery?.(table) ?? null;
-    case 'indexes':
+    case "indexes":
       return adapter.listIndexesQuery?.(table) ?? null;
     default:
       return null;

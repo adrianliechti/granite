@@ -1,5 +1,5 @@
 import type { DatabaseAdapter, ColumnInfo, TableView } from './types';
-import { sqlLiteral } from './types';
+import { sqlLiteral } from './types.ts';
 
 export const postgresAdapter: DatabaseAdapter = {
   driver: 'postgres',
@@ -35,6 +35,7 @@ export const postgresAdapter: DatabaseAdapter = {
            JOIN information_schema.key_column_usage kcu
              ON tc.constraint_name = kcu.constraint_name
              AND tc.constraint_schema = kcu.constraint_schema
+             AND tc.table_name = kcu.table_name
            WHERE tc.table_name = c.table_name AND tc.table_schema = c.table_schema
              AND kcu.column_name = c.column_name AND tc.constraint_type = 'PRIMARY KEY'
            LIMIT 1),
@@ -51,7 +52,7 @@ export const postgresAdapter: DatabaseAdapter = {
   },
 
   createDatabaseQuery(name: string) {
-    return `CREATE DATABASE "${name}"`;
+    return `CREATE DATABASE ${this.quoteIdentifier(name)}`;
   },
 
   listConstraintsQuery(table: string) {
@@ -64,6 +65,7 @@ export const postgresAdapter: DatabaseAdapter = {
       LEFT JOIN information_schema.key_column_usage kcu 
         ON tc.constraint_name = kcu.constraint_name 
         AND tc.table_schema = kcu.table_schema
+        AND tc.table_name = kcu.table_name
       WHERE tc.table_name = '${sqlLiteral(table)}'
         AND tc.table_schema = 'public'
       ORDER BY tc.constraint_name, kcu.ordinal_position
@@ -73,19 +75,22 @@ export const postgresAdapter: DatabaseAdapter = {
   listForeignKeysQuery(table: string) {
     return `
       SELECT 
-        tc.constraint_name,
-        kcu.column_name,
-        ccu.table_name AS foreign_table,
-        ccu.column_name AS foreign_column
-      FROM information_schema.table_constraints tc
-      JOIN information_schema.key_column_usage kcu 
-        ON tc.constraint_name = kcu.constraint_name
-      JOIN information_schema.constraint_column_usage ccu 
-        ON tc.constraint_name = ccu.constraint_name
-      WHERE tc.table_name = '${sqlLiteral(table)}'
-        AND tc.constraint_type = 'FOREIGN KEY'
-        AND tc.table_schema = 'public'
-      ORDER BY tc.constraint_name
+        con.conname AS constraint_name,
+        col.attname AS column_name,
+        foreign_ns.nspname AS foreign_schema,
+        foreign_table.relname AS foreign_table,
+        foreign_col.attname AS foreign_column
+      FROM pg_constraint con
+      JOIN pg_class tbl ON tbl.oid = con.conrelid
+      JOIN pg_namespace ns ON ns.oid = tbl.relnamespace
+      JOIN pg_class foreign_table ON foreign_table.oid = con.confrelid
+      JOIN pg_namespace foreign_ns ON foreign_ns.oid = foreign_table.relnamespace
+      CROSS JOIN LATERAL unnest(con.conkey, con.confkey)
+        WITH ORDINALITY AS keys(column_id, foreign_column_id, position)
+      JOIN pg_attribute col ON col.attrelid = con.conrelid AND col.attnum = keys.column_id
+      JOIN pg_attribute foreign_col ON foreign_col.attrelid = con.confrelid AND foreign_col.attnum = keys.foreign_column_id
+      WHERE tbl.relname = '${sqlLiteral(table)}' AND ns.nspname = 'public' AND con.contype = 'f'
+      ORDER BY con.conname, keys.position
     `;
   },
 

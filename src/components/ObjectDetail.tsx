@@ -1,24 +1,24 @@
-import { useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
-import { 
-  File, 
-  Image, 
-  FileText, 
-  FileCode, 
-  Archive, 
+import { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import {
+  File,
+  Image,
+  FileText,
+  FileCode,
+  Archive,
   Download,
   Loader2,
-  X
-} from 'lucide-react';
-import { 
-  getObjectDetails, 
-  getPresignedUrl, 
-  formatFileSize, 
-  getFileIconType, 
+  X,
+} from "lucide-react";
+import {
+  getObjectDetails,
+  getPresignedUrl,
+  formatFileSize,
+  getFileIconType,
   getContentTypeLabel,
-  getDisplayName
-} from '../lib/adapters/storage';
-import type { Connection } from '../types';
+  getDisplayName,
+} from "../lib/adapters/storage";
+import type { Connection } from "../types";
 
 interface ObjectDetailProps {
   connection: Connection;
@@ -37,11 +37,20 @@ const iconMap = {
   file: File,
 };
 
-export function ObjectDetail({ connection, container, objectKey, onClose }: ObjectDetailProps) {
+export function ObjectDetail({
+  connection,
+  container,
+  objectKey,
+  onClose,
+}: ObjectDetailProps) {
   const [downloadError, setDownloadError] = useState<string | null>(null);
 
-  const { data: details, isLoading, error } = useQuery({
-    queryKey: ['storage-object-details', connection.id, container, objectKey],
+  const {
+    data: details,
+    isLoading,
+    error,
+  } = useQuery({
+    queryKey: ["storage-object-details", connection.id, container, objectKey],
     queryFn: () => getObjectDetails(connection.id, container, objectKey),
     enabled: !!connection && !!container && !!objectKey,
   });
@@ -51,22 +60,24 @@ export function ObjectDetail({ connection, container, objectKey, onClose }: Obje
     try {
       const url = await getPresignedUrl(connection.id, container, objectKey);
       // Create a temporary anchor element to trigger download
-      const link = document.createElement('a');
+      const link = document.createElement("a");
       link.href = url;
       link.download = getDisplayName(objectKey);
-      link.target = '_blank';
-      link.style.display = 'none';
+      link.target = "_blank";
+      link.style.display = "none";
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
     } catch (err) {
-      setDownloadError(err instanceof Error ? err.message : 'Failed to get download URL');
+      setDownloadError(
+        err instanceof Error ? err.message : "Failed to get download URL",
+      );
     }
   };
 
   if (isLoading) {
     return (
-      <div className="flex-1 flex items-center justify-center">
+      <div className="row-inspector items-center justify-center">
         <Loader2 className="w-6 h-6 text-neutral-400 animate-spin" />
       </div>
     );
@@ -74,8 +85,11 @@ export function ObjectDetail({ connection, container, objectKey, onClose }: Obje
 
   if (error || !details) {
     return (
-      <div className="flex-1 flex items-center justify-center text-neutral-400 dark:text-neutral-600 text-sm">
-        {error ? 'Failed to load object details' : 'Select an object to view details'}
+      <div className="row-inspector p-4 gap-2" role="alert">
+        <button className="text-button" onClick={onClose}>
+          Close details
+        </button>
+        {error ? error.message : "Select an object to view details"}
       </div>
     );
   }
@@ -85,7 +99,13 @@ export function ObjectDetail({ connection, container, objectKey, onClose }: Obje
   const displayName = getDisplayName(objectKey);
 
   return (
-    <div className="flex-1 bg-white dark:bg-[#1a1a1a]/60 border border-neutral-200 dark:border-white/8 rounded-xl overflow-hidden flex flex-col">
+    <div
+      className="row-inspector"
+      aria-label="Object details"
+      onKeyDown={(e) => {
+        if (e.key === "Escape") onClose?.();
+      }}
+    >
       {/* Header */}
       <div className="px-4 py-3 border-b border-neutral-200 dark:border-white/8">
         <div className="flex items-center gap-3">
@@ -112,13 +132,16 @@ export function ObjectDetail({ connection, container, objectKey, onClose }: Obje
               onClick={onClose}
               className="p-2 rounded-lg hover:bg-neutral-100 dark:hover:bg-white/5 transition-colors"
               title="Close"
+              aria-label="Close object details"
             >
               <X className="w-4 h-4 text-neutral-500 dark:text-neutral-400" />
             </button>
           </div>
         </div>
         {downloadError && (
-          <p className="mt-2 text-xs text-red-500 dark:text-red-400 break-all">{downloadError}</p>
+          <p className="mt-2 text-xs text-red-500 dark:text-red-400 break-all">
+            {downloadError}
+          </p>
         )}
       </div>
 
@@ -128,9 +151,15 @@ export function ObjectDetail({ connection, container, objectKey, onClose }: Obje
           {/* Basic Info */}
           <DetailSection title="Basic Information">
             <DetailRow label="Size" value={formatFileSize(details.size)} />
-            <DetailRow label="Last Modified" value={formatDate(details.lastModified)} />
+            <DetailRow
+              label="Last Modified"
+              value={formatDate(details.lastModified)}
+            />
             {details.contentType && (
-              <DetailRow label="Content Type" value={getContentTypeLabel(details.contentType)} />
+              <DetailRow
+                label="Content Type"
+                value={getContentTypeLabel(details.contentType)}
+              />
             )}
             {details.etag && (
               <DetailRow label="ETag" value={details.etag} mono />
@@ -171,7 +200,13 @@ export function ObjectDetail({ connection, container, objectKey, onClose }: Obje
 
 // Sub-components
 
-function DetailSection({ title, children }: { title: string; children: React.ReactNode }) {
+function DetailSection({
+  title,
+  children,
+}: {
+  title: string;
+  children: React.ReactNode;
+}) {
   return (
     <div>
       <h3 className="text-xs font-semibold text-neutral-500 dark:text-neutral-400 uppercase tracking-wider mb-2">
@@ -184,11 +219,23 @@ function DetailSection({ title, children }: { title: string; children: React.Rea
   );
 }
 
-function DetailRow({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
+function DetailRow({
+  label,
+  value,
+  mono,
+}: {
+  label: string;
+  value: string;
+  mono?: boolean;
+}) {
   return (
     <div className="flex items-center justify-between px-3 py-2">
-      <span className="text-xs text-neutral-500 dark:text-neutral-400">{label}</span>
-      <span className={`text-xs text-neutral-700 dark:text-neutral-200 ${mono ? 'font-mono' : ''} truncate max-w-50`}>
+      <span className="text-xs text-neutral-500 dark:text-neutral-400">
+        {label}
+      </span>
+      <span
+        className={`text-xs text-neutral-700 dark:text-neutral-200 ${mono ? "font-mono" : ""} truncate max-w-50`}
+      >
         {value}
       </span>
     </div>
@@ -199,11 +246,11 @@ function formatDate(dateStr: string): string {
   try {
     const date = new Date(dateStr);
     return date.toLocaleString(undefined, {
-      year: 'numeric',
-      month: 'short',
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
+      year: "numeric",
+      month: "short",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
     });
   } catch {
     return dateStr;

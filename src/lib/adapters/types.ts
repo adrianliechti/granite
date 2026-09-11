@@ -1,5 +1,6 @@
 // Supported database drivers
-export type Driver = 'postgres' | 'mysql' | 'sqlite' | 'sqlserver' | 'oracle' | 'trino';
+export type { DatabaseDriver as Driver } from "../../types";
+import type { DatabaseDriver as Driver } from "../../types";
 
 // Column information
 export interface ColumnInfo {
@@ -14,11 +15,17 @@ export interface QueryResult {
   columns?: string[];
   rows?: Record<string, unknown>[];
   rows_affected?: number;
+  truncated?: boolean;
   error?: string;
 }
 
 // Table view types for metadata tabs
-export type TableView = 'records' | 'columns' | 'constraints' | 'foreignKeys' | 'indexes';
+export type TableView =
+  | "records"
+  | "columns"
+  | "constraints"
+  | "foreignKeys"
+  | "indexes";
 
 // Escape a string for embedding in a single-quoted SQL literal
 export function sqlLiteral(value: string): string {
@@ -41,15 +48,15 @@ export interface DatabaseAdapter {
   listColumnsQuery(table: string): string;
   selectAllQuery(table: string, limit?: number): string;
   createDatabaseQuery(name: string): string | null; // Returns null if not supported
-  
+
   // Optional metadata queries - not all drivers support these
   listConstraintsQuery?(table: string): string;
   listForeignKeysQuery?(table: string): string;
   listIndexesQuery?(table: string): string;
-  
+
   // Returns which table views this driver supports
   supportedTableViews(): TableView[];
-  
+
   // Result parsing - convert raw query results to normalized format
   parseDatabaseNames(rows: Record<string, unknown>[]): string[];
   parseTableNames(rows: Record<string, unknown>[], database?: string): string[];

@@ -1,5 +1,5 @@
 import type { DatabaseAdapter, ColumnInfo, TableView } from './types';
-import { sqlLiteral } from './types';
+import { sqlLiteral } from './types.ts';
 
 export const sqlserverAdapter: DatabaseAdapter = {
   driver: 'sqlserver',
@@ -22,7 +22,8 @@ export const sqlserverAdapter: DatabaseAdapter = {
   },
 
   listTablesQuery() {
-    return `SELECT TABLE_NAME as name FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_TYPE = 'BASE TABLE' ORDER BY TABLE_NAME`;
+    // Unqualified table names resolve in the user's default schema, then dbo.
+    return `SELECT DISTINCT TABLE_NAME as name FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_TYPE = 'BASE TABLE' AND TABLE_SCHEMA IN (SCHEMA_NAME(), 'dbo') ORDER BY name`;
   },
 
   listColumnsQuery(table: string) {
@@ -34,12 +35,17 @@ export const sqlserverAdapter: DatabaseAdapter = {
         CASE WHEN pk.COLUMN_NAME IS NOT NULL THEN 1 ELSE 0 END as primary_key
       FROM INFORMATION_SCHEMA.COLUMNS c
       LEFT JOIN (
-        SELECT ku.COLUMN_NAME
+        SELECT ku.TABLE_CATALOG, ku.TABLE_SCHEMA, ku.TABLE_NAME, ku.COLUMN_NAME
         FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS tc
-        JOIN INFORMATION_SCHEMA.KEY_COLUMN_USAGE ku ON tc.CONSTRAINT_NAME = ku.CONSTRAINT_NAME
+        JOIN INFORMATION_SCHEMA.KEY_COLUMN_USAGE ku
+          ON tc.CONSTRAINT_CATALOG = ku.CONSTRAINT_CATALOG
+          AND tc.CONSTRAINT_SCHEMA = ku.CONSTRAINT_SCHEMA
+          AND tc.CONSTRAINT_NAME = ku.CONSTRAINT_NAME
         WHERE tc.TABLE_NAME = '${sqlLiteral(table)}' AND tc.CONSTRAINT_TYPE = 'PRIMARY KEY'
-      ) pk ON c.COLUMN_NAME = pk.COLUMN_NAME
+      ) pk ON c.TABLE_CATALOG = pk.TABLE_CATALOG AND c.TABLE_SCHEMA = pk.TABLE_SCHEMA
+        AND c.TABLE_NAME = pk.TABLE_NAME AND c.COLUMN_NAME = pk.COLUMN_NAME
       WHERE c.TABLE_NAME = '${sqlLiteral(table)}'
+        AND c.TABLE_SCHEMA = OBJECT_SCHEMA_NAME(OBJECT_ID(N'${sqlLiteral(this.quoteIdentifier(table))}'))
       ORDER BY c.ORDINAL_POSITION
     `;
   },
@@ -50,7 +56,7 @@ export const sqlserverAdapter: DatabaseAdapter = {
   },
 
   createDatabaseQuery(name: string) {
-    return `CREATE DATABASE [${name}]`;
+    return `CREATE DATABASE ${this.quoteIdentifier(name)}`;
   },
 
   listConstraintsQuery(table: string) {
@@ -61,8 +67,11 @@ export const sqlserverAdapter: DatabaseAdapter = {
         kcu.COLUMN_NAME AS column_name
       FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS tc
       LEFT JOIN INFORMATION_SCHEMA.KEY_COLUMN_USAGE kcu 
-        ON tc.CONSTRAINT_NAME = kcu.CONSTRAINT_NAME
+        ON tc.CONSTRAINT_CATALOG = kcu.CONSTRAINT_CATALOG
+        AND tc.CONSTRAINT_SCHEMA = kcu.CONSTRAINT_SCHEMA
+        AND tc.CONSTRAINT_NAME = kcu.CONSTRAINT_NAME
       WHERE tc.TABLE_NAME = '${sqlLiteral(table)}'
+        AND tc.TABLE_SCHEMA = OBJECT_SCHEMA_NAME(OBJECT_ID(N'${sqlLiteral(this.quoteIdentifier(table))}'))
       ORDER BY tc.CONSTRAINT_NAME, kcu.ORDINAL_POSITION
     `;
   },
@@ -76,8 +85,8 @@ export const sqlserverAdapter: DatabaseAdapter = {
         COL_NAME(fkc.referenced_object_id, fkc.referenced_column_id) AS foreign_column
       FROM sys.foreign_keys fk
       JOIN sys.foreign_key_columns fkc ON fk.object_id = fkc.constraint_object_id
-      WHERE OBJECT_NAME(fk.parent_object_id) = '${sqlLiteral(table)}'
-      ORDER BY fk.name
+      WHERE fk.parent_object_id = OBJECT_ID(N'${sqlLiteral(this.quoteIdentifier(table))}')
+      ORDER BY fk.name, fkc.constraint_column_id
     `;
   },
 
@@ -92,7 +101,7 @@ export const sqlserverAdapter: DatabaseAdapter = {
       FROM sys.indexes i
       JOIN sys.index_columns ic ON i.object_id = ic.object_id AND i.index_id = ic.index_id
       JOIN sys.columns c ON ic.object_id = c.object_id AND ic.column_id = c.column_id
-      WHERE OBJECT_NAME(i.object_id) = '${sqlLiteral(table)}' AND i.name IS NOT NULL
+      WHERE i.object_id = OBJECT_ID(N'${sqlLiteral(this.quoteIdentifier(table))}') AND i.name IS NOT NULL
       GROUP BY i.name, i.type_desc, i.is_unique, i.is_primary_key
       ORDER BY i.name
     `;

@@ -3,10 +3,16 @@
 // ============================================================================
 
 // Database driver types
-export type DatabaseDriver = 'postgres' | 'mysql' | 'sqlite' | 'sqlserver' | 'oracle' | 'trino';
+export type DatabaseDriver =
+  | "postgres"
+  | "mysql"
+  | "sqlite"
+  | "sqlserver"
+  | "oracle"
+  | "trino";
 
 // Storage provider types
-export type StorageProvider = 's3' | 'azure-blob';
+export type StorageProvider = "s3" | "azure-blob";
 
 // SQL connection configuration
 export interface SQLConfig {
@@ -34,14 +40,14 @@ export interface AzureBlobConfig {
 export interface Connection {
   id: string;
   name: string;
-  
+
   // SQL connection (mutually exclusive with storage)
   sql?: SQLConfig;
-  
+
   // Storage connections (mutually exclusive with sql)
   amazonS3?: S3Config;
   azureBlob?: AzureBlobConfig;
-  
+
   createdAt?: string;
   updatedAt?: string;
 }
@@ -120,6 +126,7 @@ export interface SQLResponse {
   columns?: string[];
   rows?: Record<string, unknown>[];
   rows_affected?: number;
+  truncated?: boolean;
   error?: string;
 }
 
@@ -134,5 +141,3 @@ export interface QueryExecution {
   executedAt: string;
   duration: number;
 }
-
-

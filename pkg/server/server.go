@@ -14,14 +14,6 @@ import (
 
 	"github.com/adrianliechti/granite"
 	"github.com/adrianliechti/granite/pkg/config"
-
-	_ "github.com/go-sql-driver/mysql"
-	_ "github.com/lib/pq"
-	_ "github.com/microsoft/go-mssqldb"
-	_ "github.com/microsoft/go-mssqldb/integratedauth/krb5"
-	_ "github.com/sijms/go-ora/v2"
-	_ "github.com/trinodb/trino-go-client/trino"
-	_ "modernc.org/sqlite"
 )
 
 type Server struct {
@@ -38,6 +30,7 @@ func New(cfg *config.Config) (*Server, error) {
 	// Connection endpoints
 	mux.HandleFunc("GET /connections", s.handleConnectionList)
 	mux.HandleFunc("POST /connections", s.handleConnectionCreate)
+	mux.HandleFunc("POST /connections/test", s.handleConnectionTest)
 	mux.HandleFunc("GET /connections/{id}", s.handleConnectionGet)
 	mux.HandleFunc("PUT /connections/{id}", s.handleConnectionUpdate)
 	mux.HandleFunc("DELETE /connections/{id}", s.handleConnectionDelete)
@@ -45,6 +38,7 @@ func New(cfg *config.Config) (*Server, error) {
 	// SQL endpoints
 	mux.HandleFunc("POST /sql/{connection}/query", s.handleQuery)
 	mux.HandleFunc("POST /sql/{connection}/execute", s.handleExecute)
+	mux.HandleFunc("POST /sql/{connection}/batch", s.handleSQLBatch)
 
 	// Storage endpoints
 	mux.HandleFunc("POST /storage/{connection}/containers", s.handleStorageContainers)

@@ -1,427 +1,591 @@
-import { useState, useEffect, useRef } from 'react';
-import Editor, { type Monaco } from '@monaco-editor/react';
-import { Play, Sparkles, Table2, Columns3, ShieldCheck, Link, ListOrdered, ChevronDown, ChevronUp, Wand2 } from 'lucide-react';
-import { format as formatSql, type SqlLanguage } from 'sql-formatter';
-import type { Connection, DatabaseDriver } from '../types';
-import type { ColumnInfo, TableView } from '../lib/adapters';
-import type { editor } from 'monaco-editor';
+import { useEffect, useRef, useState } from "react";
+import Editor, { type OnMount } from "@monaco-editor/react";
+import { Play, Square, Wand2, ChevronDown } from "lucide-react";
+import { format, type SqlLanguage } from "sql-formatter";
+import { monaco } from "../lib/monaco";
+import type { DatabaseDriver } from "../types";
+import { getAdapter, type ColumnInfo } from "../lib/adapters";
+import {
+  commonKeywords,
+  cteColumns,
+  dialectFunctions,
+  dialectKeywords,
+  identifierText,
+  sqlTokens,
+  statementAt,
+  tableReferences,
+} from "../lib/sql";
+import { usePreference } from "../lib/preferences";
 
-// Map our driver names to sql-formatter dialects
-const driverLanguage: Record<DatabaseDriver, SqlLanguage> = {
-  postgres: 'postgresql',
-  mysql: 'mysql',
-  sqlite: 'sqlite',
-  sqlserver: 'transactsql',
-  oracle: 'plsql',
-  trino: 'trino',
-};
-
-const MIN_EDITOR_HEIGHT = 160;
-const MAX_EDITOR_HEIGHT = 720;
-const DEFAULT_EDITOR_HEIGHT = 320;
-
-// Schema info for autocomplete
 export interface SchemaInfo {
   tables: string[];
-  columns: Record<string, ColumnInfo[]>; // table name -> columns
+  columns: Record<string, ColumnInfo[]>;
 }
-
+const driverLanguage: Record<DatabaseDriver, SqlLanguage> = {
+  postgres: "postgresql",
+  mysql: "mysql",
+  sqlite: "sqlite",
+  sqlserver: "transactsql",
+  oracle: "plsql",
+  trino: "trino",
+};
 interface QueryEditorProps {
-  connection: Connection | null;
-  selectedTable: string | null;
-  onExecute: (sql: string) => void;
-  isLoading: boolean;
-  schema?: SchemaInfo;
-  // Controlled editor state (owned by App for AI integration)
+  driver: DatabaseDriver;
+  path: string;
   value: string;
   onChange: (sql: string) => void;
-  // AI panel toggle
-  onToggleAI?: () => void;
-  aiPanelOpen?: boolean;
-  // Table view actions
-  supportedViews?: TableView[];
-  onSelectView?: (view: TableView) => void;
-  activeView?: TableView | null;
-  onExpandEditor?: () => void;
+  onExecute: (sql: string) => void;
+  onCancel: () => void;
+  isLoading: boolean;
+  schema: SchemaInfo;
+  loadColumns: (table: string) => Promise<ColumnInfo[]>;
+  maxRows: number;
+  onMaxRowsChange: (limit: number) => void;
+  error?: string;
 }
-
-// View button config
-const viewConfig: Record<TableView, { icon: typeof Table2; label: string }> = {
-  records: { icon: Table2, label: 'Records' },
-  columns: { icon: Columns3, label: 'Columns' },
-  constraints: { icon: ShieldCheck, label: 'Constraints' },
-  foreignKeys: { icon: Link, label: 'Foreign Keys' },
-  indexes: { icon: ListOrdered, label: 'Indexes' },
-};
-
-// SQL keywords for autocomplete
-const SQL_KEYWORDS = [
-  'SELECT', 'FROM', 'WHERE', 'AND', 'OR', 'NOT', 'IN', 'IS', 'NULL', 'LIKE', 'BETWEEN',
-  'ORDER BY', 'GROUP BY', 'HAVING', 'LIMIT', 'OFFSET', 'JOIN', 'LEFT JOIN', 'RIGHT JOIN',
-  'INNER JOIN', 'OUTER JOIN', 'ON', 'AS', 'DISTINCT', 'COUNT', 'SUM', 'AVG', 'MIN', 'MAX',
-  'INSERT INTO', 'VALUES', 'UPDATE', 'SET', 'DELETE FROM', 'CREATE TABLE', 'DROP TABLE',
-  'ALTER TABLE', 'ADD COLUMN', 'DROP COLUMN', 'INDEX', 'UNIQUE', 'PRIMARY KEY', 'FOREIGN KEY',
-  'REFERENCES', 'CASCADE', 'ASC', 'DESC', 'UNION', 'ALL', 'EXISTS', 'CASE', 'WHEN', 'THEN',
-  'ELSE', 'END', 'COALESCE', 'NULLIF', 'CAST', 'TRUE', 'FALSE',
-];
-
-export function QueryEditor({ connection, selectedTable, onExecute, isLoading, schema, value, onChange, onToggleAI, aiPanelOpen, supportedViews, onSelectView, activeView, onExpandEditor }: QueryEditorProps) {
-  const [isCollapsed, setIsCollapsed] = useState(true);
-  const [editorHeight, setEditorHeight] = useState(DEFAULT_EDITOR_HEIGHT);
-  const [cursorPos, setCursorPos] = useState({ line: 1, column: 1 });
-  const sql = value;
-  const setSql = onChange;
-  const monacoRef = useRef<Monaco | null>(null);
-  const editorRef = useRef<editor.IStandaloneCodeEditor | null>(null);
-  const disposableRef = useRef<{ dispose: () => void } | null>(null);
-  const schemaRef = useRef<SchemaInfo | undefined>(schema);
-  
-  // Detect dark mode
-  const [isDark, setIsDark] = useState(() => 
-    window.matchMedia('(prefers-color-scheme: dark)').matches
+export function QueryEditor(props: QueryEditorProps) {
+  const {
+    driver,
+    path,
+    value,
+    onChange,
+    onCancel,
+    isLoading,
+    maxRows,
+    onMaxRowsChange,
+  } = props;
+  const execution = useRef<{
+    path: string;
+    source: string;
+    offset: number;
+  } | null>(null);
+  const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
+  const latest = useRef(props),
+    disposables = useRef<monaco.IDisposable[]>([]);
+  const [position, setPosition] = useState({
+      line: 1,
+      column: 1,
+      selected: false,
+    }),
+    [formatError, setFormatError] = useState("");
+  const [height, setHeight] = usePreference("editor-height", 260);
+  const [dark, setDark] = useState(
+    () => matchMedia("(prefers-color-scheme: dark)").matches,
   );
-  
+  const language =
+    driver === "postgres" ? "pgsql" : driver === "mysql" ? "mysql" : "sql";
   useEffect(() => {
-    const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
-    const handler = (e: MediaQueryListEvent) => setIsDark(e.matches);
-    mediaQuery.addEventListener('change', handler);
-    return () => mediaQuery.removeEventListener('change', handler);
+    latest.current = props;
+  });
+  useEffect(() => {
+    const media = matchMedia("(prefers-color-scheme: dark)");
+    const change = () => setDark(media.matches);
+    media.addEventListener("change", change);
+    return () => media.removeEventListener("change", change);
   }, []);
-
-  // Keep schema ref updated
-  useEffect(() => {
-    schemaRef.current = schema;
-  }, [schema]);
-
-  // Register autocomplete provider when Monaco is ready or schema changes
-  const handleEditorMount = (editorInstance: editor.IStandaloneCodeEditor, monaco: Monaco) => {
-    monacoRef.current = monaco;
-    editorRef.current = editorInstance;
-
-    editorInstance.onDidChangeCursorPosition((e) => {
-      setCursorPos({ line: e.position.lineNumber, column: e.position.column });
-    });
-
-    // Dispose previous completion provider if exists
-    disposableRef.current?.dispose();
-    
-    // Register completion provider for SQL
-    disposableRef.current = monaco.languages.registerCompletionItemProvider('sql', {
-      triggerCharacters: [' ', '.', ',', '('],
-      provideCompletionItems: (model: editor.ITextModel, position: { lineNumber: number; column: number }) => {
-        const currentSchema = schemaRef.current; // Use ref to get latest schema
-        
-        const word = model.getWordUntilPosition(position);
-        const range = {
-          startLineNumber: position.lineNumber,
-          endLineNumber: position.lineNumber,
-          startColumn: word.startColumn,
-          endColumn: word.endColumn,
-        };
-        
-        // Get text before cursor to determine context
-        const textBeforeCursor = model.getValueInRange({
-          startLineNumber: 1,
-          startColumn: 1,
-          endLineNumber: position.lineNumber,
-          endColumn: position.column,
-        }).toUpperCase();
-        
-        const suggestions: Parameters<typeof monaco.languages.registerCompletionItemProvider>[1] extends { provideCompletionItems: (...args: unknown[]) => infer R } ? R extends { suggestions: infer S } ? S : never : never = [];
-        
-        // Check if we're after a dot (table.column context)
-        const lineText = model.getLineContent(position.lineNumber);
-        const textBeforeDot = lineText.substring(0, position.column - 1);
-        const dotMatch = textBeforeDot.match(/(\w+)\.$/);
-        
-        if (dotMatch && currentSchema?.columns) {
-          // User typed "table." - suggest columns for that table
-          const tableName = dotMatch[1].toLowerCase();
-          const tableColumns = Object.entries(currentSchema.columns).find(
-            ([t]) => t.toLowerCase() === tableName
-          )?.[1];
-          
-          if (tableColumns) {
-            tableColumns.forEach((col) => {
-              suggestions.push({
-                label: col.name,
-                kind: monaco.languages.CompletionItemKind.Field,
-                detail: `${col.type}${col.primaryKey ? ' (PK)' : ''}${col.nullable ? '' : ' NOT NULL'}`,
-                insertText: col.name,
-                range,
-              });
-            });
-          }
-          return { suggestions };
-        }
-        
-        // Detect if we're after FROM, JOIN, INTO, UPDATE, etc. (table context)
-        const isTableContext = /\b(FROM|JOIN|INTO|UPDATE|TABLE)\s+$/i.test(textBeforeCursor) ||
-                              /\b(FROM|JOIN|INTO|UPDATE|TABLE)\s+\w*$/i.test(textBeforeCursor);
-        
-        // Detect if we're in SELECT, WHERE, SET, etc. (column context)  
-        const isColumnContext = /\bSELECT\s+(\w+\s*,\s*)*\w*$/i.test(textBeforeCursor) ||
-                               /\bWHERE\s+.*$/i.test(textBeforeCursor) ||
-                               /\bSET\s+.*$/i.test(textBeforeCursor) ||
-                               /\bAND\s+\w*$/i.test(textBeforeCursor) ||
-                               /\bOR\s+\w*$/i.test(textBeforeCursor) ||
-                               /\bORDER BY\s+.*$/i.test(textBeforeCursor) ||
-                               /\bGROUP BY\s+.*$/i.test(textBeforeCursor);
-
-        // Add SQL keywords
-        SQL_KEYWORDS.forEach((kw) => {
-          if (kw.toUpperCase().startsWith(word.word.toUpperCase())) {
-            suggestions.push({
-              label: kw,
-              kind: monaco.languages.CompletionItemKind.Keyword,
-              detail: 'SQL keyword',
-              insertText: kw,
-              range,
-            });
-          }
-        });
-        
-        // Add table suggestions
-        if (currentSchema?.tables && (isTableContext || !isColumnContext)) {
-          currentSchema.tables.forEach((table) => {
-            suggestions.push({
-              label: table,
-              kind: monaco.languages.CompletionItemKind.Class,
-              detail: 'Table',
-              insertText: table,
-              range,
-            });
-          });
-        }
-        
-        // Add column suggestions (show all columns from all known tables)
-        if (currentSchema?.columns && isColumnContext) {
-          Object.entries(currentSchema.columns).forEach(([tableName, cols]) => {
-            cols.forEach((col) => {
-              suggestions.push({
-                label: col.name,
-                kind: monaco.languages.CompletionItemKind.Field,
-                detail: `${tableName}.${col.name} (${col.type})`,
-                insertText: col.name,
-                range,
-              });
-              // Also suggest table.column format
-              suggestions.push({
-                label: `${tableName}.${col.name}`,
-                kind: monaco.languages.CompletionItemKind.Field,
-                detail: col.type,
-                insertText: `${tableName}.${col.name}`,
-                range,
-              });
-            });
-          });
-        }
-        
-        return { suggestions };
-      },
-    });
+  useEffect(() => () => disposables.current.forEach((d) => d.dispose()), []);
+  const modelScope = path.slice(0, path.lastIndexOf("/") + 1);
+  useEffect(
+    () => () => {
+      for (const model of monaco.editor.getModels())
+        if (model.uri.toString().startsWith(modelScope)) model.dispose();
+    },
+    [modelScope],
+  );
+  const run = (all = false) => {
+    const editor = editorRef.current,
+      current = latest.current;
+    if (current.isLoading) return;
+    const model = editor?.getModel(),
+      selection = editor?.getSelection();
+    const sql = all
+      ? current.value
+      : selection && !selection.isEmpty() && model
+        ? model.getValueInRange(selection)
+        : statementAt(
+            current.value,
+            model && editor?.getPosition()
+              ? model.getOffsetAt(editor.getPosition()!)
+              : 0,
+            current.driver,
+          );
+    if (sql.trim()) {
+      const offset = all
+        ? 0
+        : selection && !selection.isEmpty() && model
+          ? model.getOffsetAt(selection.getStartPosition())
+          : current.value.indexOf(
+              sql,
+              Math.max(
+                0,
+                (model && editor?.getPosition()
+                  ? model.getOffsetAt(editor.getPosition()!)
+                  : 0) - sql.length,
+              ),
+            );
+      execution.current = {
+        path: current.path,
+        source: current.value,
+        offset: Math.max(0, offset),
+      };
+      current.onExecute(sql);
+    }
   };
-
-  // Cleanup on unmount
-  useEffect(() => {
-    return () => {
-      disposableRef.current?.dispose();
-    };
-  }, []);
-
-  const handleExecute = () => {
-    if (!connection || !sql.trim()) return;
-    onExecute(sql);
-  };
-
-  const handleFormat = () => {
-    if (!sql.trim()) return;
-    const language = connection?.sql?.driver ? driverLanguage[connection.sql.driver] : undefined;
+  const formatEditor = () => {
+    const editor = editorRef.current,
+      model = editor?.getModel(),
+      current = latest.current;
+    if (!editor || !model) return;
+    const selection = editor.getSelection(),
+      selected = selection && !selection.isEmpty();
+    const range = selected ? selection : model.getFullModelRange();
     try {
-      setSql(formatSql(sql, { language: language ?? 'sql', keywordCase: 'upper' }));
-    } catch {
-      // Leave the query untouched if it can't be parsed/formatted
+      const sql = format(model.getValueInRange(range), {
+        language: driverLanguage[current.driver],
+        keywordCase: "upper",
+        tabWidth: 2,
+      });
+      editor.pushUndoStop();
+      editor.executeEdits("format-sql", [{ range, text: sql }]);
+      editor.pushUndoStop();
+      setFormatError("");
+    } catch (err) {
+      setFormatError(
+        err instanceof Error ? err.message : "Unable to format SQL",
+      );
     }
   };
-
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
-      e.preventDefault();
-      handleExecute();
-    }
-    if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === 'f') {
-      e.preventDefault();
-      handleFormat();
-    }
-  };
-
-  // Drag-to-resize the editor pane from the handle below it
-  const handleResizeStart = (e: React.MouseEvent) => {
-    e.preventDefault();
-    const startY = e.clientY;
-    const startHeight = editorHeight;
-
-    const onMouseMove = (moveEvent: MouseEvent) => {
-      const next = startHeight + (moveEvent.clientY - startY);
-      setEditorHeight(Math.min(MAX_EDITOR_HEIGHT, Math.max(MIN_EDITOR_HEIGHT, next)));
-    };
-    const onMouseUp = () => {
-      window.removeEventListener('mousemove', onMouseMove);
-      window.removeEventListener('mouseup', onMouseUp);
-    };
-    window.addEventListener('mousemove', onMouseMove);
-    window.addEventListener('mouseup', onMouseUp);
-  };
-
-  return (
-    <div
-      className="flex flex-col bg-white dark:bg-[#1a1a1a]/60 dark:backdrop-blur-xl border border-neutral-200 dark:border-white/8 rounded-xl overflow-hidden dark:shadow-2xl"
-      style={isCollapsed ? undefined : { height: editorHeight }}
-      onKeyDown={handleKeyDown}
-    >
-      {/* Toolbar */}
-      <div className="h-12 px-3 flex items-center gap-3 border-b border-neutral-200 dark:border-white/8">
-        {/* Collapse toggle */}
-        <button
-          onClick={() => {
-            if (isCollapsed && onExpandEditor) {
-              onExpandEditor();
-            }
-            setIsCollapsed(!isCollapsed);
-          }}
-          className="p-1.5 rounded-lg transition-colors text-neutral-400 hover:text-neutral-600 dark:hover:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-white/5"
-          title={isCollapsed ? 'Expand editor' : 'Collapse editor'}
-        >
-          {isCollapsed ? <ChevronDown className="w-4 h-4" /> : <ChevronUp className="w-4 h-4" />}
-        </button>
-        
-        {/* Table view action buttons */}
-        {selectedTable && supportedViews && onSelectView && (
-          <div className="flex gap-0.5 p-1 bg-neutral-100 dark:bg-white/5 rounded-lg">
-            {supportedViews.map((view) => {
-              const { icon: Icon, label } = viewConfig[view];
-              const isActive = activeView === view;
-              return (
-                <button
-                  key={view}
-                  type="button"
-                  onClick={() => {
-                    onSelectView(view);
-                    setIsCollapsed(true);
-                  }}
-                  title={label}
-                  className={`flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded-md transition-all whitespace-nowrap ${
-                    isActive
-                      ? 'bg-white dark:bg-neutral-700 text-neutral-900 dark:text-neutral-100 shadow-sm'
-                      : 'text-neutral-500 dark:text-neutral-400 hover:text-neutral-700 dark:hover:text-neutral-300 hover:bg-white dark:hover:bg-neutral-700 hover:shadow-sm'
-                  }`}
-                >
-                  <Icon className="w-3.5 h-3.5" />
-                  <span className="hidden lg:inline">{label}</span>
-                </button>
+  const mount: OnMount = (instance) => {
+    editorRef.current = instance;
+    disposables.current.forEach((d) => d.dispose());
+    disposables.current = [
+      instance.onDidChangeCursorSelection((event) => {
+        const p = event.selection.getPosition();
+        setPosition({
+          line: p.lineNumber,
+          column: p.column,
+          selected: !event.selection.isEmpty(),
+        });
+      }),
+      instance.addAction({
+        id: "granite.run",
+        label: "Run selection or current statement",
+        keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter],
+        run: () => run(),
+      }),
+      instance.addAction({
+        id: "granite.run-all",
+        label: "Run all statements",
+        keybindings: [
+          monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.Enter,
+        ],
+        run: () => run(true),
+      }),
+      instance.addAction({
+        id: "granite.format",
+        label: "Format SQL",
+        keybindings: [
+          monaco.KeyMod.Shift | monaco.KeyMod.Alt | monaco.KeyCode.KeyF,
+        ],
+        run: formatEditor,
+      }),
+      monaco.languages.registerCompletionItemProvider(language, {
+        triggerCharacters: [".", " "],
+        provideCompletionItems: async (model, pos, _context, token) => {
+          if (model !== instance.getModel()) return { suggestions: [] };
+          const current = latest.current,
+            offset = model.getOffsetAt(pos),
+            full = model.getValue();
+          const before = full.slice(0, offset),
+            last = sqlTokens(before, current.driver).at(-1);
+          if (
+            last &&
+            (last.kind === "string" || last.kind === "comment") &&
+            last.end === offset
+          )
+            return { suggestions: [] };
+          const query = statementAt(full, offset, current.driver),
+            references = tableReferences(query, current.driver),
+            ctes = cteColumns(query, current.driver);
+          const adapter = getAdapter(current.driver);
+          const resolve = (name: string) =>
+            current.schema.tables.find((t) => t === name) ??
+            current.schema.tables.find(
+              (t) => t.toLowerCase() === name.toLowerCase(),
+            ) ??
+            current.schema.tables.find(
+              (t) => t.split(".").at(-1)?.toLowerCase() === name.toLowerCase(),
+            );
+          const word = model.getWordUntilPosition(pos),
+            range = {
+              startLineNumber: pos.lineNumber,
+              endLineNumber: pos.lineNumber,
+              startColumn: word.startColumn,
+              endColumn: word.endColumn,
+            };
+          const suggestions: monaco.languages.CompletionItem[] = [];
+          const add = (
+            label: string,
+            insertText: string,
+            kind: monaco.languages.CompletionItemKind,
+            detail: string,
+            sortText = "2",
+          ) =>
+            suggestions.push({
+              label,
+              insertText,
+              kind,
+              detail,
+              range,
+              sortText: `${sortText}${label.toLowerCase()}`,
+            });
+          const qualifierMatch = before.match(
+            /([\w$]+|"(?:[^"]|"")+"|`(?:[^`]|``)+`|\[(?:[^\]]|\]\])+\])\.\w*$/,
+          );
+          const qualifier = qualifierMatch
+            ? identifierText(qualifierMatch[1])
+            : undefined;
+          const ref = qualifier
+            ? references.find(
+                (r) =>
+                  (r.alias ?? r.name).toLowerCase() === qualifier.toLowerCase(),
+              )
+            : undefined;
+          const requested = qualifier
+            ? [ref?.name ?? qualifier]
+            : references.map((r) => r.name);
+          const tables = [
+            ...new Set(
+              requested.map(resolve).filter((name): name is string => !!name),
+            ),
+          ];
+          await Promise.all(
+            tables.map(async (table) => {
+              let columns = current.schema.columns[table];
+              if (!columns) {
+                try {
+                  columns = await current.loadColumns(table);
+                } catch {
+                  return;
+                }
+              }
+              for (const column of columns)
+                add(
+                  column.name,
+                  adapter.quoteIdentifier(column.name),
+                  monaco.languages.CompletionItemKind.Field,
+                  `${table} · ${column.type}${column.primaryKey ? " · primary key" : ""}`,
+                  "0",
+                );
+            }),
+          );
+          for (const [name, columns] of Object.entries(ctes))
+            if (
+              !qualifier ||
+              (ref?.name ?? qualifier).toLowerCase() === name.toLowerCase()
+            )
+              for (const column of columns)
+                add(
+                  column,
+                  adapter.quoteIdentifier(column),
+                  monaco.languages.CompletionItemKind.Field,
+                  `${name} · CTE`,
+                  "0",
+                );
+          if (token.isCancellationRequested) return { suggestions: [] };
+          if (!qualifier) {
+            const tableContext =
+              /\b(?:FROM|JOIN|UPDATE|INTO)\s+[^\s,;]*$/i.test(before);
+            for (const table of current.schema.tables)
+              add(
+                table,
+                adapter.quoteIdentifier(table),
+                monaco.languages.CompletionItemKind.Struct,
+                "Table",
+                tableContext ? "0" : "2",
               );
-            })}
-          </div>
-        )}
-        
-        <div className="flex-1" />
-        
-        <span className="text-[10px] text-neutral-400 dark:text-neutral-500">
-          {connection ? (
-            <>
-              <span className="font-medium text-neutral-600 dark:text-neutral-300">{connection.name}</span>
-              <span className="mx-1.5">·</span>
-              <span className="uppercase">{connection.sql?.driver ?? 'unknown'}</span>
-            </>
-          ) : (
-            'No connection'
-          )}
-        </span>
-        
-        {onToggleAI && (
+            for (const name of Object.keys(ctes))
+              add(
+                name,
+                adapter.quoteIdentifier(name),
+                monaco.languages.CompletionItemKind.Struct,
+                "Common table expression",
+                tableContext ? "0" : "2",
+              );
+            for (const { name, alias } of references)
+              if (alias)
+                add(
+                  alias,
+                  alias,
+                  monaco.languages.CompletionItemKind.Variable,
+                  `Alias for ${name}`,
+                  "1",
+                );
+            for (const keyword of [
+              ...commonKeywords,
+              ...dialectKeywords[current.driver],
+            ])
+              add(
+                keyword,
+                keyword,
+                monaco.languages.CompletionItemKind.Keyword,
+                `${current.driver} SQL`,
+                "3",
+              );
+            for (const name of [
+              "COUNT",
+              "SUM",
+              "AVG",
+              "MIN",
+              "MAX",
+              "COALESCE",
+              "NULLIF",
+              "CAST",
+              "LOWER",
+              "UPPER",
+              ...dialectFunctions[current.driver],
+            ]) {
+              suggestions.push({
+                label: name,
+                insertText: `${name}(\${1})`,
+                insertTextRules:
+                  monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+                kind: monaco.languages.CompletionItemKind.Function,
+                detail: `${current.driver} function`,
+                range,
+                sortText: `3${name}`,
+              });
+            }
+            suggestions.push({
+              label: "select rows",
+              insertText:
+                "SELECT ${1:*}\nFROM ${2:table}\nWHERE ${3:condition};",
+              insertTextRules:
+                monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+              kind: monaco.languages.CompletionItemKind.Snippet,
+              range,
+            });
+          }
+          const unique = new Map(
+            suggestions.map((s) => [`${s.label}:${s.detail}`, s]),
+          );
+          return { suggestions: [...unique.values()] };
+        },
+      }),
+      monaco.languages.registerHoverProvider(language, {
+        provideHover: (model, pos) => {
+          if (model !== instance.getModel()) return null;
+          const word = model.getWordAtPosition(pos)?.word;
+          if (!word) return null;
+          const current = latest.current;
+          const table = current.schema.tables.find((t) => t === word);
+          if (table)
+            return {
+              contents: [
+                { value: `**${table.replace(/[*_`]/g, "")}** · table` },
+                {
+                  value:
+                    (current.schema.columns[table] ?? [])
+                      .map((c) => `${c.name.replace(/[*_`]/g, "")}: ${c.type}`)
+                      .join("\n\n") ||
+                    "Columns load when this table is referenced.",
+                },
+              ],
+            };
+          return null;
+        },
+      }),
+    ];
+  };
+  useEffect(() => {
+    const model = editorRef.current?.getModel();
+    if (!model) return;
+    const context = execution.current;
+    const base =
+      context && context.path === path && context.source === value
+        ? model.getPositionAt(context.offset)
+        : null;
+    const match = props.error?.match(
+      /(?:line\s+|ORA-06550:\s*line\s+)(\d+)(?:[,: ]+column\s+(\d+))?/i,
+    );
+    monaco.editor.setModelMarkers(
+      model,
+      "granite",
+      match && base
+        ? [
+            {
+              message: props.error!,
+              severity: monaco.MarkerSeverity.Error,
+              startLineNumber: base.lineNumber + Number(match[1]) - 1,
+              endLineNumber: base.lineNumber + Number(match[1]) - 1,
+              startColumn:
+                Number(match[2] ?? 1) +
+                (Number(match[1]) === 1 ? base.column - 1 : 0),
+              endColumn:
+                Number(match[2] ?? 1) +
+                (Number(match[1]) === 1 ? base.column - 1 : 0) +
+                1,
+            },
+          ]
+        : [],
+    );
+  }, [props.error, path, value]);
+  return (
+    <div className="sql-editor">
+      <div className="toolbar flex-wrap">
+        {isLoading ? (
+          <button className="text-button" onClick={onCancel}>
+            <Square size={13} />
+            Cancel query
+          </button>
+        ) : (
           <button
-            onClick={onToggleAI}
-            className={`p-1.5 rounded-lg transition-colors ${
-              aiPanelOpen 
-                ? 'bg-amber-500/10 text-amber-500' 
-                : 'text-neutral-400 hover:text-amber-500 hover:bg-amber-500/10'
-            }`}
-            title="Toggle AI Assistant"
+            className="text-button"
+            disabled={!value.trim()}
+            onClick={() => run()}
+            title="⌘/Ctrl Enter"
           >
-            <Sparkles className="w-4 h-4" />
+            <Play size={13} />
+            {position.selected ? "Run selection" : "Run statement"}
           </button>
         )}
-      </div>
-
-      {/* Editor - collapsible */}
-      {!isCollapsed && (
-        <>
-          <div className="flex-1 min-h-0">
-            <Editor
-              height="100%"
-              defaultLanguage="sql"
-              value={sql}
-              onChange={(value) => setSql(value || '')}
-              onMount={handleEditorMount}
-              theme={isDark ? 'vs-dark' : 'vs'}
-              options={{
-                quickSuggestions: true,
-                suggestOnTriggerCharacters: true,
-                minimap: { enabled: false },
-                fontSize: 13,
-                fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
-                lineNumbers: 'on',
-                scrollBeyondLastLine: false,
-                wordWrap: 'on',
-                padding: { top: 12, bottom: 12 },
-                renderLineHighlight: 'none',
-                overviewRulerLanes: 0,
-                hideCursorInOverviewRuler: true,
-                overviewRulerBorder: false,
-                scrollbar: { vertical: 'auto', horizontal: 'auto', verticalScrollbarSize: 8, horizontalScrollbarSize: 8 },
-                lineNumbersMinChars: 3,
-                folding: false,
+        <details className="inline-menu">
+          <summary className="icon-button" aria-label="More run options">
+            <ChevronDown size={13} />
+          </summary>
+          <div className="menu-popover">
+            <button
+              disabled={isLoading || !value.trim()}
+              onClick={(e) => {
+                e.currentTarget.closest("details")?.removeAttribute("open");
+                run(true);
               }}
-            />
-          </div>
-
-          {/* Drag handle to resize the editor pane */}
-          <div
-            onMouseDown={handleResizeStart}
-            className="h-1 shrink-0 cursor-row-resize hover:bg-blue-500/40 transition-colors"
-            title="Drag to resize"
-          />
-
-          {/* Bottom bar with Run button */}
-          <div className="px-3 py-2 flex items-center gap-2 border-t border-neutral-200 dark:border-white/8">
-            <button
-              onClick={handleExecute}
-              disabled={!connection || !sql.trim() || isLoading}
-              className="flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium text-neutral-600 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-neutral-200 hover:bg-neutral-100 dark:hover:bg-white/5 rounded-md disabled:opacity-50 transition-colors"
             >
-              <Play className="w-3 h-3" />
-              {isLoading ? 'Running...' : 'Run'}
+              Run all · ⌘/Ctrl Shift Enter
             </button>
-            <span className="text-[10px] text-neutral-400 dark:text-neutral-600">⌘↵</span>
-
-            <button
-              onClick={handleFormat}
-              disabled={!sql.trim()}
-              className="flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium text-neutral-600 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-neutral-200 hover:bg-neutral-100 dark:hover:bg-white/5 rounded-md disabled:opacity-50 transition-colors"
-              title="Format SQL (⌘⇧F)"
-            >
-              <Wand2 className="w-3 h-3" />
-              Format
-            </button>
-
-            <div className="flex-1" />
-
-            <span className="text-[10px] text-neutral-400 dark:text-neutral-600 font-mono tabular-nums">
-              Ln {cursorPos.line}, Col {cursorPos.column}
-            </span>
           </div>
-        </>
+        </details>
+        <button
+          className="text-button"
+          onClick={formatEditor}
+          title="Shift Alt F"
+        >
+          <Wand2 size={13} />
+          Format
+        </button>
+        <span className="muted text-xs ml-auto">{driverLanguage[driver]}</span>
+        <label className="inline-check muted text-xs">
+          Limit
+          <select
+            className="inline-select"
+            aria-label="Query result limit"
+            value={maxRows}
+            onChange={(e) => onMaxRowsChange(Number(e.target.value))}
+          >
+            {[100, 1000, 5000, 10000].map((n) => (
+              <option key={n} value={n}>
+                {n.toLocaleString()} rows
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
+      {formatError && (
+        <div className="error-banner" role="alert">
+          {formatError}
+          <button className="text-button" onClick={() => setFormatError("")}>
+            Dismiss
+          </button>
+        </div>
       )}
+      <div
+        style={{
+          height: Math.max(140, Math.min(height, window.innerHeight * 0.6)),
+        }}
+      >
+        <Editor
+          path={path}
+          language={language}
+          value={value}
+          onChange={(next) => onChange(next ?? "")}
+          onMount={mount}
+          theme={dark ? "granite-dark" : "granite-light"}
+          loading={<span className="muted text-xs">Loading SQL editor…</span>}
+          options={{
+            ariaLabel: "SQL editor",
+            minimap: { enabled: false },
+            fontSize: 13,
+            lineHeight: 21,
+            fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+            padding: { top: 12, bottom: 12 },
+            scrollBeyondLastLine: false,
+            automaticLayout: true,
+            tabSize: 2,
+            wordWrap: "on",
+            renderLineHighlight: "line",
+            overviewRulerLanes: 0,
+            hideCursorInOverviewRuler: true,
+            folding: true,
+            glyphMargin: false,
+            lineNumbersMinChars: 3,
+            wordBasedSuggestions: "off",
+            quickSuggestions: { other: true, comments: false, strings: false },
+            suggestOnTriggerCharacters: true,
+            fixedOverflowWidgets: true,
+            tabCompletion: "on",
+            accessibilitySupport: "auto",
+            scrollbar: { verticalScrollbarSize: 8, horizontalScrollbarSize: 8 },
+          }}
+        />
+      </div>
+      <div
+        className="editor-resize"
+        role="separator"
+        aria-label="Editor height"
+        aria-orientation="horizontal"
+        aria-valuenow={height}
+        tabIndex={0}
+        onKeyDown={(e) => {
+          if (["ArrowUp", "ArrowDown"].includes(e.key)) {
+            e.preventDefault();
+            setHeight(
+              Math.max(
+                140,
+                Math.min(600, height + (e.key === "ArrowDown" ? 20 : -20)),
+              ),
+            );
+          }
+        }}
+        onPointerDown={(e) => {
+          const target = e.currentTarget,
+            start = e.clientY,
+            initial = height;
+          target.setPointerCapture(e.pointerId);
+          const move = (event: PointerEvent) =>
+            setHeight(
+              Math.max(
+                140,
+                Math.min(
+                  window.innerHeight * 0.6,
+                  initial + event.clientY - start,
+                ),
+              ),
+            );
+          const end = () => {
+            target.removeEventListener("pointermove", move);
+            target.removeEventListener("pointerup", end);
+            target.removeEventListener("pointercancel", end);
+          };
+          target.addEventListener("pointermove", move);
+          target.addEventListener("pointerup", end);
+          target.addEventListener("pointercancel", end);
+        }}
+      >
+        <span />{" "}
+        <span className="editor-position">
+          Ln {position.line}, Col {position.column}
+        </span>
+      </div>
     </div>
   );
 }

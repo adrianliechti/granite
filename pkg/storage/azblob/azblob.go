@@ -287,26 +287,15 @@ func (p *Provider) GetObjectDetails(ctx context.Context, containerName, blobName
 
 // GetPresignedURL generates a read-only SAS URL for downloading a blob
 func (p *Provider) GetPresignedURL(ctx context.Context, containerName, blobName string, expiresIn int) (string, error) {
-	if p.config.AccountKey == "" {
-		return "", fmt.Errorf("account key required for generating presigned URLs")
-	}
-
-	cred, err := azblob.NewSharedKeyCredential(p.config.AccountName, p.config.AccountKey)
-	if err != nil {
-		return "", fmt.Errorf("failed to create credential: %w", err)
-	}
-
-	serviceURL := fmt.Sprintf("https://%s.blob.core.windows.net/", p.config.AccountName)
-	client, err := azblob.NewClientWithSharedKeyCredential(serviceURL, cred, nil)
-	if err != nil {
-		return "", fmt.Errorf("failed to create client: %w", err)
-	}
-
 	if expiresIn <= 0 {
 		expiresIn = 3600 // Default 1 hour
 	}
 
-	blobClient := client.ServiceClient().NewContainerClient(containerName).NewBlobClient(blobName)
+	blobClient := p.client.ServiceClient().NewContainerClient(containerName).NewBlobClient(blobName)
+	if p.config.SASToken != "" && p.config.AccountKey == "" && p.config.ConnectionString == "" {
+		// A SAS connection already has a scoped download URL; it cannot mint a new token.
+		return blobClient.URL(), nil
+	}
 	expiry := time.Now().Add(time.Duration(expiresIn) * time.Second)
 
 	sasURL, err := blobClient.GetSASURL(sas.BlobPermissions{Read: true}, expiry, nil)

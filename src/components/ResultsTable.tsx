@@ -1,458 +1,806 @@
-import { useMemo, useState, useEffect } from 'react';
 import {
-  useReactTable,
-  getCoreRowModel,
-  getSortedRowModel,
-  flexRender,
-  type ColumnDef,
-  type SortingState,
-  type ColumnSizingState,
-  type RowData,
-} from '@tanstack/react-table';
-import { ChevronUp, ChevronDown, ChevronsUpDown, AlertTriangle, Trash2, Download } from 'lucide-react';
-import type { SQLResponse } from '../types';
-
-// Extend TanStack Table's TableMeta to include our updateData function
-declare module '@tanstack/react-table' {
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  interface TableMeta<TData extends RowData> {
-    updateData: (rowIndex: number, columnId: string, value: unknown) => void;
-  }
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  interface ColumnMeta<TData extends RowData, TValue> {
-    isNumeric?: boolean;
-  }
-}
-
-// Escape a value for embedding in a CSV cell
-function csvCell(value: unknown): string {
-  if (value === null || value === undefined) return '';
-  const str = typeof value === 'object' ? JSON.stringify(value) : String(value);
-  return /[",\n]/.test(str) ? `"${str.replace(/"/g, '""')}"` : str;
-}
-
-// Trigger a browser download of the current result set as CSV
-function downloadCSV(columns: string[], rows: Record<string, unknown>[], filename: string) {
-  const lines = [
-    columns.map(csvCell).join(','),
-    ...rows.map((row) => columns.map((col) => csvCell(row[col])).join(',')),
-  ];
-  const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8' });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement('a');
-  link.href = url;
-  link.download = filename;
-  link.click();
-  URL.revokeObjectURL(url);
-}
+  useState,
+  type CSSProperties,
+  type KeyboardEvent,
+  type ReactNode,
+} from "react";
+import {
+  ArrowDown,
+  ArrowUp,
+  Check,
+  ChevronDown,
+  Columns3,
+  Copy,
+  Download,
+  Loader2,
+  Pin,
+  Trash2,
+  X,
+  PanelRight,
+} from "lucide-react";
+import type { SQLResponse } from "../types";
+import type { ColumnInfo } from "../lib/adapters";
+import {
+  displayValue,
+  editableColumn,
+  inputValue,
+  parseCellValue,
+  valueKind,
+  type DataSort,
+} from "../lib/data";
+import { usePreference } from "../lib/preferences";
 
 interface ResultsTableProps {
   response: SQLResponse | null;
-  duration: number;
+  duration?: number;
   isLoading: boolean;
-  tableName?: string | null;
-  onUpdateCell?: (originalRow: Record<string, unknown>, columnId: string, newValue: unknown) => void;
-  onDeleteRow?: (row: Record<string, unknown>) => void;
+  tableName?: string;
+  preferenceKey?: string;
+  columnsInfo?: ColumnInfo[];
+  sorting?: DataSort[];
+  onSort?: (sorting: DataSort[]) => void;
+  onUpdateCell?: (
+    row: Record<string, unknown>,
+    column: string,
+    value: unknown,
+  ) => Promise<void>;
+  onDeleteRow?: (row: Record<string, unknown>) => Promise<void>;
+  rowKey?: (row: Record<string, unknown>) => string;
+  footer?: ReactNode;
+  busy?: boolean;
+  emptyMessage?: string;
 }
-
-// Editable cell component
-function EditableCell({
-  getValue,
-  row: { index },
-  column: { id },
-  table,
+export function ValueInput({
+  value,
+  onChange,
+  column,
+  label,
+  multiline = false,
+  autoFocus = false,
 }: {
-  getValue: () => unknown;
-  row: { index: number };
-  column: { id: string };
-  table: { options: { meta?: { updateData: (rowIndex: number, columnId: string, value: unknown) => void } } };
+  value: string;
+  onChange: (value: string) => void;
+  column?: ColumnInfo;
+  label: string;
+  multiline?: boolean;
+  autoFocus?: boolean;
 }) {
-  const initialValue = getValue();
-  const [value, setValue] = useState(initialValue);
-  const [isEditing, setIsEditing] = useState(false);
-
-  // Sync with external changes (adjust during render)
-  const [prevInitialValue, setPrevInitialValue] = useState(initialValue);
-  if (initialValue !== prevInitialValue) {
-    setPrevInitialValue(initialValue);
-    setValue(initialValue);
-  }
-
-  const onBlur = () => {
-    setIsEditing(false);
-    if (value !== initialValue) {
-      table.options.meta?.updateData(index, id, value);
-    }
-  };
-
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter') {
-      (e.target as HTMLInputElement).blur();
-    }
-    if (e.key === 'Escape') {
-      setValue(initialValue);
-      setIsEditing(false);
-    }
-  };
-
-  // Render NULL values
-  if (initialValue === null && !isEditing) {
+  const kind = valueKind(column?.type ?? "text");
+  if (kind === "boolean")
     return (
-      <span
-        className="text-neutral-400 dark:text-neutral-600 italic cursor-pointer"
-        onClick={() => setIsEditing(true)}
+      <select
+        aria-label={label}
+        className="field"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        autoFocus={autoFocus}
       >
-        NULL
-      </span>
+        <option value="">Choose…</option>
+        <option value="true">true</option>
+        <option value="false">false</option>
+        <option value="1">1</option>
+        <option value="0">0</option>
+      </select>
     );
-  }
-
-  // Render boolean values
-  if (typeof initialValue === 'boolean' && !isEditing) {
+  if (multiline || kind === "json")
     return (
-      <span
-        className="text-neutral-500 dark:text-neutral-400 cursor-pointer"
-        onClick={() => setIsEditing(true)}
-      >
-        {initialValue ? 'true' : 'false'}
-      </span>
-    );
-  }
-
-  // Render object values (non-editable for now)
-  if (typeof initialValue === 'object' && initialValue !== null) {
-    return (
-      <span className="text-neutral-500 dark:text-neutral-400">
-        {JSON.stringify(initialValue)}
-      </span>
-    );
-  }
-
-  if (isEditing) {
-    return (
-      <input
-        value={value === null ? '' : String(value)}
-        onChange={(e) => setValue(e.target.value)}
-        onBlur={onBlur}
-        onKeyDown={handleKeyDown}
-        autoFocus
-        className="w-full bg-white dark:bg-neutral-800 border border-blue-500 dark:border-blue-400 rounded px-1 py-0.5 text-[12px] font-mono text-neutral-700 dark:text-neutral-200 outline-none"
+      <textarea
+        aria-label={label}
+        className="field font-mono resize-y"
+        rows={kind === "json" ? 5 : 3}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        autoFocus={autoFocus}
+        spellCheck={false}
       />
     );
-  }
-
   return (
-    <span
-      className="text-neutral-600 dark:text-neutral-400 cursor-pointer hover:text-neutral-900 dark:hover:text-neutral-200"
-      onClick={() => setIsEditing(true)}
-    >
-      {String(value)}
-    </span>
+    <input
+      aria-label={label}
+      className="field font-mono"
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      autoFocus={autoFocus}
+      spellCheck={false}
+      inputMode={kind === "number" ? "decimal" : undefined}
+      placeholder={
+        kind === "date"
+          ? "YYYY-MM-DD"
+          : kind === "datetime"
+            ? "YYYY-MM-DD HH:mm:ss"
+            : undefined
+      }
+    />
   );
 }
-
-// Read-only cell component (for when editing is disabled)
-function ReadOnlyCell({ getValue }: { getValue: () => unknown }) {
-  const value = getValue();
-  if (value === null) return <span className="text-neutral-400 dark:text-neutral-600 italic">NULL</span>;
-  if (typeof value === 'boolean') return <span className="text-neutral-500 dark:text-neutral-400">{value ? 'true' : 'false'}</span>;
-  if (typeof value === 'object') return <span className="text-neutral-500 dark:text-neutral-400">{JSON.stringify(value)}</span>;
-  return <span className="text-neutral-600 dark:text-neutral-400">{String(value)}</span>;
-}
-
-export function ResultsTable({ response, duration, isLoading, tableName, onUpdateCell, onDeleteRow }: ResultsTableProps) {
-  const [sorting, setSorting] = useState<SortingState>([]);
-  const [columnSizing, setColumnSizing] = useState<ColumnSizingState>({});
-  const [tableData, setTableData] = useState<Record<string, unknown>[]>([]);
-  const [deleteConfirm, setDeleteConfirm] = useState<number | null>(null);
-
-  const canEdit = !!tableName && !!onUpdateCell;
-  const canDelete = !!tableName && !!onDeleteRow;
-
-  // Sync tableData with response
-  useEffect(() => {
-    setTableData(response?.rows ?? []);
-    setColumnSizing({});
-  }, [response?.rows]);
-
-  // Columns whose sampled values are all numeric - right-aligned for readability
-  const numericColumns = useMemo(() => {
-    const cols = new Set<string>();
-    if (!response?.columns || !response.rows?.length) return cols;
-
-    for (const col of response.columns) {
-      const sample = response.rows.slice(0, 50);
-      const hasValue = sample.some((row) => row[col] !== null && row[col] !== undefined);
-      const allNumeric = sample.every((row) => row[col] === null || row[col] === undefined || typeof row[col] === 'number');
-      if (hasValue && allNumeric) cols.add(col);
+function EditableValue({
+  value,
+  column,
+  onSave,
+  disabled,
+  detail,
+  onStatus,
+}: {
+  value: unknown;
+  column?: ColumnInfo;
+  onSave?: (value: unknown) => Promise<void>;
+  disabled?: boolean;
+  detail?: boolean;
+  onStatus: (message: string) => void;
+}) {
+  const [editing, setEditing] = useState(false),
+    [draft, setDraft] = useState(""),
+    [isNull, setNull] = useState(false);
+  const [pending, setPending] = useState(false),
+    [error, setError] = useState("");
+  const canEdit = !!onSave && !disabled && editableColumn(column);
+  const begin = () => {
+    if (!canEdit) return;
+    setDraft(inputValue(value, column));
+    setNull(value == null);
+    setError("");
+    setEditing(true);
+  };
+  const save = async () => {
+    if (!onSave || pending) return;
+    setPending(true);
+    setError("");
+    onStatus("Saving…");
+    try {
+      await onSave(isNull ? null : parseCellValue(draft, column));
+      setEditing(false);
+      onStatus("Saved");
+    } catch (err) {
+      setEditing(false);
+      setError(err instanceof Error ? err.message : "Could not save");
+      onStatus("Edit failed · stored value restored");
+    } finally {
+      setPending(false);
     }
-    return cols;
-  }, [response?.columns, response?.rows]);
-
-  const columns = useMemo<ColumnDef<Record<string, unknown>>[]>(() => {
-    if (!response?.columns) return [];
-    
-    const dataColumns: ColumnDef<Record<string, unknown>>[] = response.columns.map((col) => ({
-      accessorKey: col,
-      header: col,
-      cell: canEdit ? EditableCell : ReadOnlyCell,
-      meta: { isNumeric: numericColumns.has(col) },
-    }));
-
-    // Add actions column if delete is enabled
-    if (canDelete) {
-      dataColumns.push({
-        id: 'actions',
-        header: '',
-        size: 50,
-        cell: ({ row }) => {
-          const isConfirming = deleteConfirm === row.index;
-          return (
-            <div className="flex items-center gap-1">
-              {isConfirming ? (
-                <>
-                  <button
-                    onClick={() => {
-                      onDeleteRow?.(row.original);
-                      setDeleteConfirm(null);
-                    }}
-                    className="p-1 text-red-500 hover:text-red-600 dark:text-red-400 dark:hover:text-red-300"
-                    title="Confirm delete"
-                  >
-                    <Trash2 size={14} />
-                  </button>
-                  <button
-                    onClick={() => setDeleteConfirm(null)}
-                    className="p-1 text-neutral-400 hover:text-neutral-600 dark:hover:text-neutral-300 text-xs"
-                    title="Cancel"
-                  >
-                    ✕
-                  </button>
-                </>
+  };
+  if (editing)
+    return (
+      <form
+        className="cell-editor"
+        onSubmit={(e) => {
+          e.preventDefault();
+          void save();
+        }}
+        onKeyDown={(e) => {
+          e.stopPropagation();
+          if (e.key === "Escape" && !pending) {
+            setEditing(false);
+            e.preventDefault();
+          }
+        }}
+      >
+        <fieldset disabled={pending}>
+          {!isNull && (
+            <ValueInput
+              label={`Value for ${column?.name ?? "cell"}`}
+              value={draft}
+              onChange={setDraft}
+              column={column}
+              multiline={detail}
+              autoFocus
+            />
+          )}
+          <div className="flex items-center gap-1 mt-1">
+            {column?.nullable !== false && (
+              <label className="inline-check">
+                <input
+                  type="checkbox"
+                  checked={isNull}
+                  onChange={(e) => setNull(e.target.checked)}
+                />
+                NULL
+              </label>
+            )}
+            <button
+              type="submit"
+              className="icon-button"
+              aria-label="Save value"
+            >
+              {pending ? (
+                <Loader2 size={14} className="animate-spin" />
               ) : (
-                <button
-                  onClick={() => setDeleteConfirm(row.index)}
-                  className="p-1 text-neutral-400 hover:text-red-500 dark:hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity"
-                  title="Delete row"
-                >
-                  <Trash2 size={14} />
-                </button>
+                <Check size={14} />
               )}
-            </div>
-          );
-        },
-      });
-    }
-
-    return dataColumns;
-  }, [response?.columns, canEdit, canDelete, deleteConfirm, onDeleteRow, numericColumns]);
-
-  // eslint-disable-next-line react-hooks/incompatible-library -- TanStack Table returns non-memoizable functions by design
-  const table = useReactTable({
-    data: tableData,
-    columns,
-    state: { sorting, columnSizing },
-    onSortingChange: setSorting,
-    onColumnSizingChange: setColumnSizing,
-    columnResizeMode: 'onChange',
-    defaultColumn: { size: 160, minSize: 60, maxSize: 640 },
-    getCoreRowModel: getCoreRowModel(),
-    getSortedRowModel: getSortedRowModel(),
-    meta: {
-      updateData: (rowIndex, columnId, value) => {
-        const originalRow = tableData[rowIndex];
-        // Update local state
-        setTableData((old) =>
-          old.map((row, index) => {
-            if (index === rowIndex) {
-              return { ...row, [columnId]: value };
-            }
-            return row;
-          })
-        );
-        // Call the update handler
-        onUpdateCell?.(originalRow, columnId, value);
-      },
-    },
-  });
-
-  // Loading state
-  if (isLoading) {
-    return (
-      <div className="h-full flex items-center justify-center bg-white dark:bg-[#1a1a1a]/60 dark:backdrop-blur-xl border border-neutral-200 dark:border-white/8 rounded-xl">
-        <div className="flex flex-col items-center gap-3 text-neutral-400 dark:text-neutral-500">
-          <div className="w-6 h-6 border-2 border-neutral-200 border-t-neutral-400 dark:border-neutral-700 dark:border-t-neutral-500 rounded-full animate-spin" />
-          <span className="text-sm">Running query...</span>
-        </div>
-      </div>
-    );
-  }
-
-  // No query run yet
-  if (!response) {
-    return (
-      <div className="h-full flex items-center justify-center bg-white dark:bg-[#1a1a1a]/60 dark:backdrop-blur-xl border border-neutral-200 dark:border-white/8 rounded-xl">
-        <div className="flex flex-col items-center text-neutral-400 dark:text-neutral-500">
-          <svg className="w-8 h-8 mb-2 opacity-50" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4" />
-          </svg>
-          <span className="text-sm">Run a query to see results</span>
-        </div>
-      </div>
-    );
-  }
-
-  // Error state
-  if (response.error) {
-    return (
-      <div className="h-full flex items-center justify-center bg-white dark:bg-[#1a1a1a]/60 dark:backdrop-blur-xl border border-neutral-200 dark:border-white/8 rounded-xl">
-        <div className="flex items-center gap-3 text-red-500 dark:text-red-400">
-          <AlertTriangle size={18} />
-          <span className="text-sm">{response.error}</span>
-        </div>
-      </div>
-    );
-  }
-
-  // Rows affected (non-SELECT queries)
-  if (response.rows_affected !== undefined && !response.rows) {
-    return (
-      <div className="h-full flex items-center justify-center bg-white dark:bg-[#1a1a1a]/60 dark:backdrop-blur-xl border border-neutral-200 dark:border-white/8 rounded-xl">
-        <div className="flex flex-col items-center gap-2">
-          <div className="flex items-center gap-3">
-            <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-semibold bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-500/30">
-              OK
-            </span>
-            <span className="text-sm text-neutral-600 dark:text-neutral-400">
-              <span className="font-medium">{response.rows_affected}</span> row(s) affected
-            </span>
+            </button>
+            <button
+              type="button"
+              className="icon-button"
+              aria-label="Cancel edit"
+              onClick={() => setEditing(false)}
+            >
+              <X size={14} />
+            </button>
           </div>
-          <span className="text-xs text-neutral-400 dark:text-neutral-600">{duration.toFixed(0)}ms</span>
-        </div>
-      </div>
+        </fieldset>
+      </form>
     );
-  }
-
   return (
-    <div className="flex flex-col h-full bg-white dark:bg-[#1a1a1a]/60 dark:backdrop-blur-xl border border-neutral-200 dark:border-white/8 rounded-xl overflow-hidden dark:shadow-2xl">
-      {/* Table */}
-      <div className="flex-1 overflow-auto">
-        <table className="text-[13px]" style={{ width: table.getTotalSize(), minWidth: '100%' }}>
-          <thead className="sticky top-0 z-10 bg-neutral-100 dark:bg-neutral-950">
-            {table.getHeaderGroups().map((headerGroup) => (
-              <tr key={headerGroup.id}>
-                {headerGroup.headers.map((header) => {
-                  const isSorted = header.column.getIsSorted();
-                  const isActionsCol = header.id === 'actions';
-                  const isNumeric = !!header.column.columnDef.meta?.isNumeric;
-                  return (
-                    <th
-                      key={header.id}
-                      style={{ width: header.getSize() }}
-                      className={`relative px-4 py-2 text-[11px] font-medium whitespace-nowrap transition-colors select-none group bg-neutral-100 dark:bg-neutral-950 ${
-                        isActionsCol ? 'w-12' : 'cursor-pointer'
-                      } ${isNumeric ? 'text-right' : 'text-left'} ${
-                        isSorted
-                          ? 'text-neutral-900 dark:text-neutral-200'
-                          : 'text-neutral-500 dark:text-neutral-500 hover:text-neutral-700 dark:hover:text-neutral-400'
-                      }`}
-                    >
-                      {!isActionsCol && (
-                        <div
-                          onClick={header.column.getToggleSortingHandler()}
-                          className={`flex items-center gap-1 ${isNumeric ? 'justify-end' : ''}`}
-                        >
-                          {flexRender(header.column.columnDef.header, header.getContext())}
-                          <span className={`transition-opacity ${isSorted ? 'opacity-100' : 'opacity-0 group-hover:opacity-40'}`}>
-                            {isSorted === 'asc' ? (
-                              <ChevronUp size={12} />
-                            ) : isSorted === 'desc' ? (
-                              <ChevronDown size={12} />
-                            ) : (
-                              <ChevronsUpDown size={12} />
-                            )}
-                          </span>
-                        </div>
-                      )}
-                      {!isActionsCol && (
-                        <div
-                          onMouseDown={header.getResizeHandler()}
-                          onTouchStart={header.getResizeHandler()}
-                          onClick={(e) => e.stopPropagation()}
-                          className={`absolute top-0 right-0 h-full w-1.5 cursor-col-resize touch-none select-none ${
-                            header.column.getIsResizing() ? 'bg-blue-500' : 'hover:bg-blue-500/40'
-                          }`}
-                        />
-                      )}
-                    </th>
-                  );
-                })}
-              </tr>
-            ))}
-          </thead>
-          <tbody>
-            {table.getRowModel().rows.map((row, rowIndex) => {
-              const isOdd = rowIndex % 2 === 1;
-              const visibleCells = row.getVisibleCells();
-              return (
-                <tr
-                  key={row.id}
-                  className={`group transition-colors ${
-                    isOdd
-                      ? 'bg-neutral-200/40 dark:bg-neutral-800/30 hover:bg-neutral-200/70 dark:hover:bg-neutral-800/50'
-                      : 'hover:bg-neutral-200/50 dark:hover:bg-neutral-800/30'
-                  }`}
-                >
-                  {visibleCells.map((cell, idx) => {
-                    const isNumeric = !!cell.column.columnDef.meta?.isNumeric;
+    <div className="min-w-0">
+      <span
+        className={`cell-value ${value == null ? "muted italic" : ""} ${canEdit ? "cursor-text" : ""} ${detail ? "whitespace-pre-wrap break-all" : ""}`}
+        title={displayValue(value) || (value == null ? "NULL" : "Empty string")}
+        onClick={begin}
+      >
+        {value == null
+          ? "NULL"
+          : displayValue(value) || <span className="muted italic">empty</span>}
+      </span>
+      {error && (
+        <div role="alert" className="inline-error whitespace-normal">
+          <span>{error}</span>
+          <button className="text-button" onClick={begin} disabled={disabled}>
+            Retry edit
+          </button>
+          <button
+            className="icon-button"
+            aria-label="Dismiss edit error"
+            onClick={() => setError("")}
+          >
+            <X size={12} />
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+function csv(columns: string[], rows: Record<string, unknown>[]) {
+  const escape = (value: unknown) =>
+    `"${displayValue(value).replaceAll('"', '""')}"`;
+  return [
+    columns.map(escape).join(","),
+    ...rows.map((row) =>
+      columns.map((c) => (row[c] == null ? "" : escape(row[c]))).join(","),
+    ),
+  ].join("\r\n");
+}
+export function ResultsTable({
+  response,
+  duration = 0,
+  isLoading,
+  tableName,
+  preferenceKey = "query",
+  columnsInfo = [],
+  sorting,
+  onSort,
+  onUpdateCell,
+  onDeleteRow,
+  rowKey,
+  footer,
+  busy,
+  emptyMessage,
+}: ResultsTableProps) {
+  const [localSort, setLocalSort] = useState<DataSort[]>([]);
+  const [pinned, setPinned] = usePreference<string[]>(
+    `grid:${preferenceKey}:pinned`,
+    [],
+  );
+  const [hidden, setHidden] = usePreference<string[]>(
+    `grid:${preferenceKey}:hidden`,
+    [],
+  );
+  const [widths, setWidths] = usePreference<Record<string, number>>(
+    `grid:${preferenceKey}:widths`,
+    {},
+  );
+  const [status, setStatus] = useState(""),
+    [selected, setSelected] = useState<Record<string, unknown> | null>(null);
+  const [deleting, setDeleting] = useState<string | null>(null),
+    [deleteError, setDeleteError] = useState(""),
+    [deletePending, setDeletePending] = useState(false);
+  const activeSort = sorting ?? localSort;
+  const allColumns = response?.columns ?? [];
+  const columns = [
+    ...pinned.filter((c) => allColumns.includes(c) && !hidden.includes(c)),
+    ...allColumns.filter((c) => !hidden.includes(c) && !pinned.includes(c)),
+  ];
+  const rows = [...(response?.rows ?? [])];
+  if (!onSort && activeSort.length)
+    rows.sort((a, b) => {
+      for (const { id, desc } of activeSort) {
+        const x = a[id],
+          y = b[id];
+        const order =
+          x == null
+            ? y == null
+              ? 0
+              : -1
+            : y == null
+              ? 1
+              : typeof x === "number" && typeof y === "number"
+                ? x - y
+                : displayValue(x).localeCompare(displayValue(y), undefined, {
+                    numeric: true,
+                  });
+        if (order) return desc ? -order : order;
+      }
+      return 0;
+    });
+  const keyFor = (row: Record<string, unknown>, index: number) =>
+    rowKey?.(row) ?? String(index);
+  const width = (name: string) =>
+    widths[name] ??
+    Math.min(
+      300,
+      Math.max(
+        90,
+        Math.max(
+          name.length + 5,
+          ...(response?.rows ?? [])
+            .slice(0, 30)
+            .map((row) => Math.min(40, displayValue(row[name]).length)),
+        ) *
+          7.2 +
+          24,
+      ),
+    );
+  const style = (name: string): CSSProperties => ({
+    width: width(name),
+    minWidth: width(name),
+    maxWidth: width(name),
+    ...(pinned.includes(name)
+      ? {
+          position: "sticky",
+          left: columns
+            .slice(0, columns.indexOf(name))
+            .filter((c) => pinned.includes(c))
+            .reduce((sum, c) => sum + width(c), 0),
+          zIndex: 2,
+        }
+      : {}),
+  });
+  const copy = async (text: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setStatus("Copied");
+    } catch {
+      setStatus("Clipboard unavailable");
+    }
+  };
+  const sort = (name: string, multi: boolean) => {
+    const current = activeSort.find((s) => s.id === name);
+    const next = multi ? activeSort.filter((s) => s.id !== name) : [];
+    if (!current?.desc) next.push({ id: name, desc: !!current });
+    (onSort ?? setLocalSort)(next);
+  };
+  const cellKeyDown = (
+    event: KeyboardEvent<HTMLTableCellElement>,
+    row: number,
+    col: number,
+  ) => {
+    if (event.target !== event.currentTarget) return;
+    if ((event.metaKey || event.ctrlKey) && event.key === "c") {
+      event.preventDefault();
+      void copy(displayValue(rows[row][columns[col]]));
+    }
+    if (event.key === "Enter") {
+      event.preventDefault();
+      const value =
+        event.currentTarget.querySelector<HTMLElement>(".cell-value");
+      if (onUpdateCell && !busy) value?.click();
+      else setSelected(rows[row]);
+    }
+    const next = (
+      {
+        ArrowUp: [row - 1, col],
+        ArrowDown: [row + 1, col],
+        ArrowLeft: [row, col - 1],
+        ArrowRight: [row, col + 1],
+      } as Record<string, number[]>
+    )[event.key];
+    if (next) {
+      event.preventDefault();
+      event.currentTarget
+        .closest("table")
+        ?.querySelector<HTMLElement>(`[data-cell="${next[0]}:${next[1]}"]`)
+        ?.focus();
+    }
+  };
+  const deleteRow = async (row: Record<string, unknown>) => {
+    if (!onDeleteRow || deletePending) return;
+    setDeletePending(true);
+    setDeleteError("");
+    setStatus("Deleting…");
+    try {
+      await onDeleteRow(row);
+      setDeleting(null);
+      setSelected(null);
+      setStatus("Row deleted");
+    } catch (err) {
+      setDeleteError(err instanceof Error ? err.message : "Delete failed");
+      setStatus("Delete failed");
+    } finally {
+      setDeletePending(false);
+    }
+  };
+  const inspectorRow =
+    selected && rowKey
+      ? (rows.find((row) => rowKey(row) === rowKey(selected)) ?? selected)
+      : selected;
+  return (
+    <section
+      className="results flex flex-col min-h-0 min-w-0 flex-1"
+      aria-label={tableName ? `${tableName} results` : "Query results"}
+      aria-busy={isLoading || busy}
+    >
+      {response?.error && (
+        <div className="error-banner" role="alert">
+          {response.error}
+        </div>
+      )}
+      <div className="flex flex-1 min-h-0 relative">
+        <div className="flex-1 overflow-auto min-w-0">
+          {allColumns.length > 0 ? (
+            <table
+              className="data-grid"
+              style={{
+                minWidth: "100%",
+                width: columns.reduce((sum, c) => sum + width(c), 0) + 76,
+              }}
+            >
+              <caption className="sr-only">
+                {onUpdateCell
+                  ? "Click a value or press Enter to edit. Escape cancels an edit. "
+                  : ""}
+                Use arrow keys to move between cells. Copy a cell with Control
+                or Command C.
+              </caption>
+              <thead>
+                <tr>
+                  {columns.map((name) => {
+                    const direction = activeSort.find((s) => s.id === name);
                     return (
-                      <td
-                        key={cell.id}
-                        style={{ width: cell.column.getSize() }}
-                        className={`px-4 py-2 whitespace-nowrap overflow-hidden text-ellipsis font-mono text-[12px] ${idx === 0 ? 'rounded-l-lg' : ''} ${idx === visibleCells.length - 1 ? 'rounded-r-lg' : ''} ${isNumeric ? 'text-right tabular-nums' : 'text-left'}`}
+                      <th
+                        key={name}
+                        style={style(name)}
+                        aria-sort={
+                          direction
+                            ? direction.desc
+                              ? "descending"
+                              : "ascending"
+                            : "none"
+                        }
                       >
-                        {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                      </td>
+                        <div className="flex items-center gap-1">
+                          <button
+                            className="column-title"
+                            onClick={(e) => sort(name, e.shiftKey)}
+                            title={`Sort ${name} · Shift-click for multiple columns`}
+                          >
+                            <span className="truncate">{name}</span>
+                            {direction &&
+                              (direction.desc ? (
+                                <ArrowDown size={12} />
+                              ) : (
+                                <ArrowUp size={12} />
+                              ))}
+                          </button>
+                          <button
+                            className={`icon-button quiet ${pinned.includes(name) ? "active" : ""}`}
+                            aria-label={`${pinned.includes(name) ? "Unpin" : "Pin"} ${name}`}
+                            onClick={() =>
+                              setPinned((current) =>
+                                current.includes(name)
+                                  ? current.filter((c) => c !== name)
+                                  : [...current, name],
+                              )
+                            }
+                          >
+                            <Pin size={12} />
+                          </button>
+                        </div>
+                        <div
+                          className="column-resize"
+                          role="separator"
+                          aria-label={`Width of ${name}`}
+                          aria-orientation="vertical"
+                          aria-valuenow={width(name)}
+                          tabIndex={0}
+                          onKeyDown={(e) => {
+                            if (["ArrowLeft", "ArrowRight"].includes(e.key)) {
+                              e.preventDefault();
+                              setWidths((current) => ({
+                                ...current,
+                                [name]: Math.max(
+                                  90,
+                                  Math.min(
+                                    700,
+                                    width(name) +
+                                      (e.key === "ArrowRight" ? 20 : -20),
+                                  ),
+                                ),
+                              }));
+                            }
+                          }}
+                          onPointerDown={(e) => {
+                            const start = e.clientX,
+                              initial = width(name);
+                            e.currentTarget.setPointerCapture(e.pointerId);
+                            const target = e.currentTarget;
+                            const move = (event: PointerEvent) =>
+                              setWidths((current) => ({
+                                ...current,
+                                [name]: Math.max(
+                                  90,
+                                  Math.min(
+                                    700,
+                                    initial + event.clientX - start,
+                                  ),
+                                ),
+                              }));
+                            const end = () => {
+                              target.removeEventListener("pointermove", move);
+                              target.removeEventListener("pointerup", end);
+                              target.removeEventListener("pointercancel", end);
+                            };
+                            target.addEventListener("pointermove", move);
+                            target.addEventListener("pointerup", end);
+                            target.addEventListener("pointercancel", end);
+                          }}
+                        />
+                      </th>
                     );
                   })}
+                  <th className="row-actions-heading">
+                    <span className="sr-only">Row actions</span>
+                  </th>
                 </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
-
-      {/* Status Bar */}
-      <div className="px-3 py-2 flex items-center gap-4 text-xs border-t border-neutral-200 dark:border-white/8 shrink-0">
-        <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-semibold bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-500/30">
-          OK
-        </span>
-        <div className="flex items-center gap-2">
-          <span className="text-neutral-400 dark:text-neutral-500">Time:</span>
-          <span className="text-neutral-700 dark:text-neutral-200 font-medium">{duration.toFixed(0)}ms</span>
+              </thead>
+              <tbody>
+                {rows.map((row, index) => (
+                  <tr key={keyFor(row, index)}>
+                    {columns.map((name, colIndex) => (
+                      <td
+                        key={name}
+                        style={style(name)}
+                        tabIndex={index === 0 && colIndex === 0 ? 0 : -1}
+                        data-cell={`${index}:${colIndex}`}
+                        onKeyDown={(event) =>
+                          cellKeyDown(event, index, colIndex)
+                        }
+                        onFocus={(e) => {
+                          const table = e.currentTarget.closest("table");
+                          table
+                            ?.querySelectorAll<HTMLTableCellElement>(
+                              'td[tabindex="0"]',
+                            )
+                            .forEach((cell) => {
+                              if (cell !== e.currentTarget) cell.tabIndex = -1;
+                            });
+                          e.currentTarget.tabIndex = 0;
+                        }}
+                      >
+                        <EditableValue
+                          value={row[name]}
+                          column={columnsInfo.find((c) => c.name === name)}
+                          onSave={
+                            onUpdateCell
+                              ? (value) => onUpdateCell(row, name, value)
+                              : undefined
+                          }
+                          disabled={busy}
+                          onStatus={setStatus}
+                        />
+                      </td>
+                    ))}
+                    <td className="row-actions">
+                      {deleting === keyFor(row, index) ? (
+                        <div className="flex items-center gap-1">
+                          <button
+                            className="text-button danger"
+                            aria-label="Confirm delete"
+                            disabled={deletePending || busy}
+                            onClick={() => void deleteRow(row)}
+                          >
+                            Delete?
+                          </button>
+                          <button
+                            className="icon-button"
+                            aria-label="Cancel delete"
+                            disabled={deletePending}
+                            onClick={() => {
+                              setDeleting(null);
+                              setDeleteError("");
+                            }}
+                          >
+                            <X size={13} />
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="flex items-center">
+                          <button
+                            className="icon-button quiet"
+                            aria-label="Inspect row"
+                            onClick={() => setSelected(row)}
+                          >
+                            <PanelRight size={14} />
+                          </button>
+                          {onDeleteRow && (
+                            <button
+                              className="icon-button quiet"
+                              aria-label="Delete row"
+                              disabled={busy}
+                              onClick={() => {
+                                setDeleting(keyFor(row, index));
+                                setDeleteError("");
+                              }}
+                            >
+                              <Trash2 size={13} />
+                            </button>
+                          )}
+                        </div>
+                      )}
+                      {deleting === keyFor(row, index) && deleteError && (
+                        <p className="inline-error" role="alert">
+                          {deleteError}
+                        </p>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          ) : null}
+          {!rows.length && (
+            <div className="empty-state">
+              {isLoading ? (
+                <>
+                  <Loader2 size={18} className="animate-spin" />
+                  Loading…
+                </>
+              ) : response?.error ? (
+                "Adjust the query or filters and try again."
+              ) : response?.rows_affected != null && !allColumns.length ? (
+                `${response.rows_affected} row${response.rows_affected === 1 ? "" : "s"} affected`
+              ) : (
+                (emptyMessage ??
+                (response ? "No matching rows" : "Run a query to see results."))
+              )}
+            </div>
+          )}
         </div>
-        <div className="flex items-center gap-2">
-          <span className="text-neutral-400 dark:text-neutral-500">Rows:</span>
-          <span className="text-neutral-700 dark:text-neutral-200 font-medium">{tableData.length}</span>
-        </div>
-        <div className="flex items-center gap-2">
-          <span className="text-neutral-400 dark:text-neutral-500">Columns:</span>
-          <span className="text-neutral-700 dark:text-neutral-200 font-medium">{response.columns?.length ?? 0}</span>
-        </div>
-        <button
-          onClick={() => downloadCSV(response.columns ?? [], tableData, `${tableName ?? 'results'}.csv`)}
-          className="flex items-center gap-1.5 text-neutral-400 hover:text-neutral-700 dark:hover:text-neutral-300 transition-colors"
-          title="Export as CSV"
-        >
-          <Download size={12} />
-          Export CSV
-        </button>
-        {canEdit && (
-          <div className="ml-auto text-neutral-400 dark:text-neutral-600 text-[10px]">
-            Click a cell to edit
-          </div>
+        {inspectorRow && (
+          <aside
+            className="row-inspector"
+            aria-label="Row inspector"
+            onKeyDown={(e) => {
+              if (e.key === "Escape") setSelected(null);
+            }}
+          >
+            <div className="toolbar justify-between">
+              <strong className="font-medium">Row details</strong>
+              <div className="flex">
+                <button
+                  className="icon-button"
+                  aria-label="Copy row as JSON"
+                  onClick={() =>
+                    void copy(JSON.stringify(inspectorRow, null, 2))
+                  }
+                >
+                  <Copy size={14} />
+                </button>
+                <button
+                  className="icon-button"
+                  aria-label="Close row inspector"
+                  autoFocus
+                  onClick={() => setSelected(null)}
+                >
+                  <X size={15} />
+                </button>
+              </div>
+            </div>
+            <div className="overflow-auto p-3 space-y-4">
+              {allColumns.map((name) => (
+                <div key={name}>
+                  <div className="flex items-baseline justify-between gap-2 mb-1">
+                    <span className="font-medium">{name}</span>
+                    <span className="muted text-xs">
+                      {columnsInfo.find((c) => c.name === name)?.type}
+                    </span>
+                  </div>
+                  <EditableValue
+                    value={inspectorRow[name]}
+                    column={columnsInfo.find((c) => c.name === name)}
+                    detail
+                    onSave={
+                      onUpdateCell
+                        ? (value) => onUpdateCell(inspectorRow, name, value)
+                        : undefined
+                    }
+                    disabled={busy}
+                    onStatus={setStatus}
+                  />
+                </div>
+              ))}
+            </div>
+          </aside>
         )}
       </div>
-    </div>
+      <div className="results-footer">
+        <span className="muted" role="status">
+          {isLoading
+            ? "Loading…"
+            : status ||
+              `${rows.length.toLocaleString()} rows${duration ? ` · ${Math.round(duration)} ms` : ""}`}
+        </span>
+        {allColumns.length > 0 && (
+          <>
+            <details className="inline-menu">
+              <summary className="text-button">
+                <Columns3 size={13} />
+                Columns
+                <ChevronDown size={11} />
+              </summary>
+              <div className="menu-popover above">
+                {allColumns.map((name) => (
+                  <label key={name} className="inline-check">
+                    <input
+                      type="checkbox"
+                      checked={!hidden.includes(name)}
+                      disabled={!hidden.includes(name) && columns.length === 1}
+                      onChange={() =>
+                        setHidden((current) =>
+                          current.includes(name)
+                            ? current.filter((c) => c !== name)
+                            : [...current, name],
+                        )
+                      }
+                    />
+                    {name}
+                  </label>
+                ))}
+              </div>
+            </details>
+            <button
+              className="text-button"
+              title="Export the loaded rows"
+              onClick={() => {
+                const url = URL.createObjectURL(
+                  new Blob([csv(allColumns, rows)], {
+                    type: "text/csv;charset=utf-8;",
+                  }),
+                );
+                const anchor = document.createElement("a");
+                anchor.href = url;
+                anchor.download = `${tableName ?? "results"}.csv`;
+                anchor.click();
+                URL.revokeObjectURL(url);
+              }}
+            >
+              <Download size={13} />
+              Export page
+            </button>
+            <button
+              className="icon-button"
+              aria-label="Copy rows as TSV"
+              onClick={() =>
+                void copy(
+                  [
+                    allColumns.join("\t"),
+                    ...rows.map((row) =>
+                      allColumns
+                        .map((c) =>
+                          displayValue(row[c]).replace(/[\t\r\n]/g, " "),
+                        )
+                        .join("\t"),
+                    ),
+                  ].join("\n"),
+                )
+              }
+            >
+              <Copy size={13} />
+            </button>
+          </>
+        )}
+        {response?.truncated && (
+          <span className="muted">Result limit reached</span>
+        )}
+        {footer}
+      </div>
+    </section>
   );
 }

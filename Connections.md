@@ -8,7 +8,7 @@ sqlserver://sa:7BaW3b2Uh9@localhost:1433?database=master
 ```
 
 ```
-oracle://system:l9iC1R24KU@localhost:1521/XEPDB1
+system/l9iC1R24KU@tcp://localhost:1521/XEPDB1
 ```
 
 ```

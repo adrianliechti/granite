@@ -1,5 +1,5 @@
 import type { DatabaseAdapter, ColumnInfo, TableView } from './types';
-import { sqlLiteral } from './types';
+import { sqlLiteral } from './types.ts';
 
 export const oracleAdapter: DatabaseAdapter = {
   driver: 'oracle',
@@ -88,15 +88,16 @@ export const oracleAdapter: DatabaseAdapter = {
       SELECT 
         a.constraint_name,
         a.column_name,
+        c_pk.owner AS foreign_schema,
         c_pk.table_name AS foreign_table,
         b.column_name AS foreign_column
       FROM user_cons_columns a
       JOIN user_constraints c ON a.constraint_name = c.constraint_name
-      JOIN user_constraints c_pk ON c.r_constraint_name = c_pk.constraint_name
-      JOIN user_cons_columns b ON c_pk.constraint_name = b.constraint_name AND a.position = b.position
+      JOIN all_constraints c_pk ON c.r_owner = c_pk.owner AND c.r_constraint_name = c_pk.constraint_name
+      JOIN all_cons_columns b ON c_pk.owner = b.owner AND c_pk.constraint_name = b.constraint_name AND a.position = b.position
       WHERE c.constraint_type = 'R'
         AND c.table_name = '${sqlLiteral(table)}'
-      ORDER BY a.constraint_name
+      ORDER BY a.constraint_name, a.position
     `;
   },
 
@@ -130,8 +131,8 @@ export const oracleAdapter: DatabaseAdapter = {
     return rows.map((row) => ({
       name: String(row.name ?? row.NAME),
       type: String(row.type ?? row.TYPE ?? row.DATA_TYPE),
-      nullable: Boolean(row.nullable ?? row.NULLABLE),
-      primaryKey: Boolean(row.primary_key ?? row.PRIMARY_KEY),
+      nullable: Number(row.nullable ?? row.NULLABLE) === 1,
+      primaryKey: Number(row.primary_key ?? row.PRIMARY_KEY) === 1,
     }));
   },
 };

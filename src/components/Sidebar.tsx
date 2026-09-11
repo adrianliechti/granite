@@ -1,327 +1,425 @@
-import { useState, useMemo } from 'react';
-import { Plus, Trash2, Pencil, Database, Package } from 'lucide-react';
-import { useParams, useNavigate } from '@tanstack/react-router';
-import { useLiveQuery } from '@tanstack/react-db';
-import { connectionsCollection } from '../lib/collections';
-import { encodePathSegments } from '../lib/adapters';
-import { ConnectionModal } from './ConnectionModal';
-import { CreateContainerModal } from './CreateContainerModal';
-import { DatabaseBrowser } from './DatabaseBrowser';
-import { ObjectStorageBrowser } from './ObjectStorageBrowser';
-import type { Connection } from '../types';
-import { isSQLConnection, isStorageConnection } from '../types';
+import { useState } from "react";
+import {
+  Plus,
+  Database,
+  Package,
+  ChevronRight,
+  ChevronDown,
+  Star,
+  PanelLeftClose,
+  PanelLeftOpen,
+  RefreshCw,
+  Pencil,
+  Trash2,
+} from "lucide-react";
+import { useParams, useNavigate } from "@tanstack/react-router";
+import { useQueryClient } from "@tanstack/react-query";
+import { useLiveQuery } from "@tanstack/react-db";
+import {
+  connectionsCollection,
+  collectionsQueryClient,
+} from "../lib/collections";
+import { encodePathSegments } from "../lib/adapters";
+import { usePreference } from "../lib/preferences";
+import { ConnectionModal } from "./ConnectionModal";
+import { CreateContainerModal } from "./CreateContainerModal";
+import { DatabaseBrowser } from "./DatabaseBrowser";
+import { ObjectStorageBrowser } from "./ObjectStorageBrowser";
+import type { Connection } from "../types";
+import type { OpenQuery } from "../lib/queries";
+import { RowMenu } from "./RowMenu";
 
 interface SidebarProps {
   showAddModal?: boolean;
   onAddModalClose?: () => void;
+  collapsed: boolean;
+  onCollapse: () => void;
+  onOpenQuery: OpenQuery;
 }
-
-const driverColors: Record<string, string> = {
-  postgres: 'text-blue-600 dark:text-blue-400',
-  mysql: 'text-yellow-600 dark:text-yellow-400',
-  sqlite: 'text-purple-600 dark:text-purple-400',
-  sqlserver: 'text-red-600 dark:text-red-400',
-  oracle: 'text-orange-600 dark:text-orange-400',
-  // Storage providers
-  's3': 'text-orange-600 dark:text-orange-400',
-  'azure-blob': 'text-blue-600 dark:text-blue-400',
-};
-
 export function Sidebar({
   showAddModal = false,
   onAddModalClose,
+  collapsed,
+  onCollapse,
+  onOpenQuery,
 }: SidebarProps) {
-  // Get route params from URL
-  const params = useParams({ strict: false });
-  const navigate = useNavigate();
-
-  // Navigation handlers
-  const onSelectConnection = (connId: string | null) => {
-    if (!connId) {
-      navigate({ to: '/' });
-    } else {
-      navigate({ to: `/${connId}` });
-    }
-  };
-
-  const onSelectDatabase = (connId: string, db: string) => {
-    navigate({ to: `/${connId}/${encodeURIComponent(db)}` });
-  };
-
-  const onSelectTable = (connId: string, db: string, tbl: string) => {
-    navigate({ to: `/${connId}/${encodeURIComponent(db)}/${encodeURIComponent(tbl)}` });
-  };
-
-  const onSelectContainer = (connId: string, cont: string) => {
-    navigate({ to: `/${connId}/container/${encodeURIComponent(cont)}` });
-  };
-
-  const onSelectPath = (connId: string, cont: string, path: string) => {
-    const normalizedPath = path.replace(/^\/+/, '');
-    navigate({ to: `/${connId}/container/${encodeURIComponent(cont)}/${encodePathSegments(normalizedPath)}` });
-  };
-
+  const params = useParams({ strict: false }),
+    navigate = useNavigate(),
+    queryClient = useQueryClient();
   const connections = useLiveQuery((q) =>
-    q.from({ conn: connectionsCollection }).orderBy(({ conn }) => conn.createdAt, 'desc')
+    q
+      .from({ conn: connectionsCollection })
+      .orderBy(({ conn }) => conn.createdAt, "desc"),
   );
-
-  const [modalState, setModalState] = useState<{ open: boolean; connection?: Connection | null }>({ open: false });
-  const [createContainerFor, setCreateContainerFor] = useState<Connection | null>(null);
-  // Manual expand/collapse overrides on top of route-driven expansion (true = open, false = closed)
-  const [overrides, setOverrides] = useState<Map<string, boolean>>(new Map());
-  
-  // Compute items that should be auto-expanded based on route params
-  const routeExpanded = useMemo(() => {
-    const keys = new Set<string>();
-    const connId = params.connectionId;
-    const database = params.database;
-    const container = params.container;
-    const path = params['_splat'] || '';
-    
-    if (!connId) return keys;
-    
-    // Always expand the active connection
-    keys.add(connId);
-    
-    // For database connections: expand active database
-    if (database) {
-      keys.add(`${connId}:${database}`);
-    }
-    
-    // For storage connections: expand active container
-    if (container) {
-      keys.add(`container:${connId}:${container}`);
-    }
-    
-    // For storage: expand path segments if there's a path
-    if (container && path) {
-      const segments = path.split('/').filter(Boolean);
-      let currentPath = '';
-      for (const segment of segments) {
-        currentPath = currentPath ? `${currentPath}/${segment}` : segment;
-        // Don't expand the last segment if it's a file (no trailing /)
-        if (currentPath !== path.replace(/\/$/, '')) {
-          keys.add(`folder:${connId}:${container}:${currentPath}/`);
-        }
-      }
-    }
-    
-    return keys;
-  }, [params]);
-  
-  // When navigation newly expands a key, drop a stale manual collapse for it
-  // so the active route is never hidden (adjust during render)
-  const [prevRouteExpanded, setPrevRouteExpanded] = useState(routeExpanded);
-  if (routeExpanded !== prevRouteExpanded) {
-    setPrevRouteExpanded(routeExpanded);
-    const stale = [...routeExpanded].filter(
-      (key) => !prevRouteExpanded.has(key) && overrides.get(key) === false
-    );
-    if (stale.length > 0) {
-      setOverrides((prev) => {
-        const next = new Map(prev);
-        stale.forEach((key) => next.delete(key));
-        return next;
-      });
+  const [modal, setModal] = useState<{
+    connection?: Connection;
+    open: boolean;
+  }>({ open: false });
+  const [createContainerFor, setCreateContainerFor] =
+    useState<Connection | null>(null);
+  const [favoritesOnly, setFavoritesOnly] = useState(false);
+  const [favorites, setFavorites] = usePreference<string[]>("favorites", []);
+  const [overrides, setOverrides] = useState<Record<string, boolean>>({});
+  const [deleteId, setDeleteId] = useState<string | null>(null),
+    [deletePending, setDeletePending] = useState(false),
+    [error, setError] = useState("");
+  const routeKeys = [
+    params.connectionId,
+    params.database ? `${params.connectionId}:${params.database}` : undefined,
+    params.container
+      ? `container:${params.connectionId}:${params.container}`
+      : undefined,
+  ].filter((key): key is string => !!key);
+  if (params.container && params["_splat"]) {
+    let prefix = "";
+    for (const segment of params["_splat"].split("/").filter(Boolean)) {
+      prefix += `${segment}/`;
+      routeKeys.push(
+        `folder:${params.connectionId}:${params.container}:${prefix}`,
+      );
     }
   }
-
-  // Route-based expansion with manual overrides applied on top
-  const expanded = useMemo(() => {
-    const keys = new Set(routeExpanded);
-    for (const [key, open] of overrides) {
-      if (open) {
-        keys.add(key);
-      } else {
-        keys.delete(key);
-      }
-    }
-    return keys;
-  }, [routeExpanded, overrides]);
-
-  const toggle = (key: string) => {
-    const open = !expanded.has(key);
-    setOverrides((prev) => new Map(prev).set(key, open));
+  const routeKey = routeKeys.join("|");
+  const [previousRoute, setPreviousRoute] = useState(routeKey);
+  if (routeKey !== previousRoute) {
+    setPreviousRoute(routeKey);
+    setOverrides((current) => {
+      const next = { ...current };
+      for (const key of routeKeys) delete next[key];
+      return next;
+    });
+  }
+  const expanded = new Set(routeKeys);
+  for (const [key, open] of Object.entries(overrides))
+    if (open) expanded.add(key);
+    else expanded.delete(key);
+  const toggle = (key: string) =>
+    setOverrides((current) => ({ ...current, [key]: !expanded.has(key) }));
+  const favorite = (path: string) =>
+    setFavorites((current) =>
+      current.includes(path)
+        ? current.filter((p) => p !== path)
+        : [...current, path],
+    );
+  const go = (path: string) => {
+    void navigate({ to: path });
+    if (window.innerWidth < 720 && !collapsed) onCollapse();
   };
-
-  // Sync the local collection after the modal has already persisted the
-  // connection on the server (write*, not insert/update, to avoid re-posting)
-  const saveConnection = async (conn: Connection): Promise<Connection> => {
-    if (modalState.connection) {
-      connectionsCollection.utils.writeUpdate(conn);
-    } else {
+  const saveConnection = async (conn: Connection) => {
+    if (modal.connection) connectionsCollection.utils.writeUpdate(conn);
+    else {
       connectionsCollection.utils.writeInsert(conn);
-      onSelectConnection(conn.id);
-      setOverrides((prev) => new Map(prev).set(conn.id, true));
+      go(`/${conn.id}`);
     }
+    void queryClient.invalidateQueries({
+      predicate: (query) => query.queryKey[1] === conn.id,
+    });
     return conn;
   };
-
-  const deleteConnection = async (id: string): Promise<void> => {
-    connectionsCollection.delete(id);
-    if (params.connectionId === id) {
-      onSelectConnection(null);
+  const remove = async (id: string) => {
+    setDeletePending(true);
+    setError("");
+    try {
+      await connectionsCollection.delete(id).isPersisted.promise;
+      setFavorites((current) =>
+        current.filter((p) => !p.startsWith(`/${id}/`)),
+      );
+      if (params.connectionId === id) go("/");
+      setDeleteId(null);
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Could not delete connection",
+      );
+    } finally {
+      setDeletePending(false);
     }
   };
-
-  // Get connection label based on type
-  const getConnectionLabel = (conn: Connection): string => {
-    if (isSQLConnection(conn) && conn.sql) {
-      switch (conn.sql.driver) {
-        case 'postgres': return 'PG';
-        case 'mysql': return 'MY';
-        case 'sqlserver': return 'MS';
-        case 'oracle': return 'OR';
-        case 'sqlite': return 'SQ';
-        default: return 'DB';
-      }
-    } else if (conn.amazonS3) {
-      return 'S3';
-    } else if (conn.azureBlob) {
-      return 'AZ';
-    }
-    return '??';
-  };
-
-  // Get color class for connection type
-  const getConnectionColor = (conn: Connection): string => {
-    if (isSQLConnection(conn) && conn.sql) {
-      return driverColors[conn.sql.driver] || 'text-neutral-500';
-    } else if (conn.amazonS3) {
-      return driverColors['s3'] || 'text-neutral-500';
-    } else if (conn.azureBlob) {
-      return driverColors['azure-blob'] || 'text-neutral-500';
-    }
-    return 'text-neutral-500';
-  };
-
   return (
     <>
-      {/* Connection Modal */}
-      {(modalState.open || showAddModal) && (
+      {(modal.open || showAddModal) && (
         <ConnectionModal
-          connection={modalState.connection}
+          connection={modal.connection}
           onSave={saveConnection}
           onClose={() => {
-            setModalState({ open: false });
+            setModal({ open: false });
             onAddModalClose?.();
           }}
         />
       )}
-
-      {/* Create Container Modal */}
       {createContainerFor && (
         <CreateContainerModal
           connection={createContainerFor}
           onClose={() => setCreateContainerFor(null)}
         />
       )}
-
-      <aside className="w-64 bg-white dark:bg-[#1a1a1a]/60 dark:backdrop-blur-xl border border-neutral-200 dark:border-white/8 rounded-xl flex flex-col overflow-hidden dark:shadow-2xl">
-        {/* Header */}
-        <div className="px-3 py-2.5 flex items-center justify-between gap-2">
-          <h1 className="text-sm font-semibold text-neutral-700 dark:text-neutral-200 pl-0.5">Granite</h1>
-          <div className="flex items-center gap-1">
-            <button
-              onClick={() => setModalState({ open: true, connection: null })}
-              className="p-1.5 rounded-lg hover:bg-neutral-100 dark:hover:bg-white/5 transition-colors"
-              title="Add connection"
-            >
-              <Plus className="w-4 h-4 text-neutral-500 dark:text-neutral-400" />
+      <aside
+        className={`sidebar panel ${collapsed ? "collapsed" : ""}`}
+        aria-label="Connections"
+      >
+        <div className="sidebar-header">
+          {!collapsed && (
+            <button className="font-semibold mr-auto" onClick={() => go("/")}>
+              Granite
             </button>
-          </div>
-        </div>
-
-        {/* Connections List */}
-        <div className="flex-1 overflow-y-auto px-2">
-          {(connections?.data ?? []).length === 0 ? (
-            <div className="px-2 py-8 text-center text-neutral-400 dark:text-neutral-600 text-xs">
-              No connections yet
-            </div>
-          ) : (
-            <div className="space-y-0.5 pb-2">
-              {(connections?.data ?? []).map((conn) => {
-                      const isExpanded = expanded.has(conn.id);
-                      const isDatabase = isSQLConnection(conn);
-                      const isStorage = isStorageConnection(conn);
-
-                      return (
-                        <div key={conn.id}>
-                          {/* Connection Row */}
-                          <div
-                            className="group flex items-center gap-2 px-3 py-1.5 rounded-lg hover:bg-neutral-100 dark:hover:bg-white/5 cursor-pointer transition-colors"
-                            onClick={() => {
-                              onSelectConnection(conn.id);
-                              toggle(conn.id);
-                            }}
-                          >
-                            {isDatabase ? (
-                              <Database className={`w-3 h-3 shrink-0 ${getConnectionColor(conn)}`} />
-                            ) : (
-                              <Package className={`w-3 h-3 shrink-0 ${getConnectionColor(conn)}`} />
-                            )}
-                            <span className={`text-[10px] font-semibold shrink-0 uppercase ${getConnectionColor(conn)}`}>
-                              {getConnectionLabel(conn)}
-                            </span>
-                            <span className="text-xs text-neutral-500 dark:text-neutral-400 truncate flex-1">
-                              {conn.name}
-                            </span>
-                            <div className="flex items-center gap-0.5">
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  setModalState({ open: true, connection: conn });
-                                }}
-                                className="inline-flex items-center justify-center w-5 h-5 hover:bg-neutral-200 dark:hover:bg-white/8 rounded transition-colors"
-                                title="Edit"
-                              >
-                                <Pencil className="w-3 h-3 text-neutral-400 dark:text-neutral-500 hover:text-blue-500 dark:hover:text-blue-400" />
-                              </button>
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  deleteConnection(conn.id);
-                                }}
-                                className="inline-flex items-center justify-center w-5 h-5 hover:bg-neutral-200 dark:hover:bg-white/8 rounded transition-colors"
-                                title="Delete"
-                              >
-                                <Trash2 className="w-3 h-3 text-neutral-400 dark:text-neutral-500 hover:text-rose-500 dark:hover:text-rose-400" />
-                              </button>
-                            </div>
-                          </div>
-
-                          {/* Nested Browser - Database */}
-                          {isExpanded && isDatabase && (
-                            <div className="ml-4">
-                              <DatabaseBrowser
-                                connection={conn}
-                                expanded={expanded}
-                                onToggle={toggle}
-                                onSelectDatabase={(db) => onSelectDatabase(conn.id, db)}
-                                onSelectTable={(db, tbl) => onSelectTable(conn.id, db, tbl)}
-                              />
-                            </div>
-                          )}
-
-                          {/* Nested Browser - Storage */}
-                          {isExpanded && isStorage && (
-                            <div className="ml-4">
-                              <ObjectStorageBrowser
-                                connection={conn}
-                                expanded={expanded}
-                                onToggle={toggle}
-                                onSelectContainer={(container) => onSelectContainer(conn.id, container)}
-                                onSelectPath={(container, path) => onSelectPath(conn.id, container, path)}
-                                onCreateContainer={() => setCreateContainerFor(conn)}
-                              />
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })}
-            </div>
           )}
+          <button
+            className="icon-button"
+            aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+            title="⌘/Ctrl B"
+            onClick={onCollapse}
+          >
+            {collapsed ? (
+              <PanelLeftOpen size={16} />
+            ) : (
+              <PanelLeftClose size={16} />
+            )}
+          </button>
+          <button
+            className="icon-button"
+            aria-label="Add connection"
+            title="Add connection"
+            onClick={() => setModal({ open: true })}
+          >
+            <Plus size={16} />
+          </button>
         </div>
+        {!collapsed && (
+          <>
+            <div className="flex items-center px-3 pb-2 gap-2">
+              <button
+                className={`text-button text-xs ${favoritesOnly ? "active" : ""}`}
+                onClick={() => setFavoritesOnly(!favoritesOnly)}
+                aria-pressed={favoritesOnly}
+              >
+                <Star size={12} />
+                Favorites
+              </button>
+              <button
+                className="icon-button ml-auto"
+                aria-label="Refresh sidebar"
+                onClick={() => {
+                  void collectionsQueryClient.invalidateQueries();
+                  void queryClient.invalidateQueries({
+                    predicate: (query) =>
+                      [
+                        "databases",
+                        "tables",
+                        "table-columns",
+                        "storage-tree",
+                        "storage-containers",
+                      ].includes(String(query.queryKey[0])),
+                  });
+                }}
+              >
+                <RefreshCw size={13} />
+              </button>
+            </div>
+          </>
+        )}
+        <nav
+          className="sidebar-tree"
+          aria-label="Database and storage browser"
+          onKeyDown={(e) => {
+            if (
+              e.target instanceof HTMLInputElement ||
+              e.target instanceof HTMLSelectElement
+            )
+              return;
+            if (["ArrowDown", "ArrowUp", "Home", "End"].includes(e.key)) {
+              const buttons = [
+                ...e.currentTarget.querySelectorAll<HTMLButtonElement>(
+                  "button",
+                ),
+              ].filter(
+                (button) => !button.disabled && button.getClientRects().length,
+              );
+              const index = buttons.indexOf(
+                document.activeElement as HTMLButtonElement,
+              );
+              const next =
+                e.key === "Home"
+                  ? 0
+                  : e.key === "End"
+                    ? buttons.length - 1
+                    : index + (e.key === "ArrowDown" ? 1 : -1);
+              if (buttons[next]) {
+                e.preventDefault();
+                buttons[next].focus();
+              }
+            }
+          }}
+        >
+          {favoritesOnly && !collapsed ? (
+            <>
+              {favorites.map((path) => {
+                const parts = path.split("/");
+                const conn = connections.data?.find((c) => c.id === parts[1]);
+                return (
+                  conn && (
+                    <div className="tree-row" key={path}>
+                      <button
+                        className="tree-label"
+                        onClick={() => go(path)}
+                        title={`${conn.name} / ${decodeURIComponent(parts[2])}`}
+                      >
+                        <Star size={12} />
+                        <span>
+                          {decodeURIComponent(parts.at(-1) ?? "")}
+                          <small className="block muted text-xs">
+                            {conn.name} / {decodeURIComponent(parts[2])}
+                          </small>
+                        </span>
+                      </button>
+                      <button
+                        className="icon-button quiet"
+                        aria-label="Remove favorite"
+                        onClick={() => favorite(path)}
+                      >
+                        <Star size={12} fill="currentColor" />
+                      </button>
+                    </div>
+                  )
+                );
+              })}
+              {!favorites.length && (
+                <p className="tree-message">Star a table to keep it here.</p>
+              )}
+            </>
+          ) : (
+            (connections.data ?? []).map((conn) => {
+              const open = expanded.has(conn.id),
+                Icon = conn.sql ? Database : Package;
+              if (collapsed)
+                return (
+                  <button
+                    key={conn.id}
+                    className={`rail-connection icon-button ${params.connectionId === conn.id ? "active" : ""}`}
+                    aria-label={conn.name}
+                    title={conn.name}
+                    onClick={() => go(`/${conn.id}`)}
+                  >
+                    <Icon size={16} />
+                  </button>
+                );
+              return (
+                <div key={conn.id}>
+                  <RowMenu
+                    label={`Actions for ${conn.name}`}
+                    className={`tree-row connection-row ${params.connectionId === conn.id && !params.database && !params.container ? "active" : ""}`}
+                    items={[
+                      {
+                        label: "Edit connection",
+                        icon: <Pencil size={14} />,
+                        onSelect: () =>
+                          setModal({ open: true, connection: conn }),
+                      },
+                      {
+                        label: "Remove connection",
+                        icon: <Trash2 size={14} />,
+                        danger: true,
+                        onSelect: () => {
+                          setDeleteId(conn.id);
+                          setError("");
+                        },
+                      },
+                    ]}
+                  >
+                    <button
+                      className="tree-toggle"
+                      aria-label={`${open ? "Collapse" : "Expand"} ${conn.name}`}
+                      aria-expanded={open}
+                      onClick={() => toggle(conn.id)}
+                    >
+                      {open ? (
+                        <ChevronDown size={12} />
+                      ) : (
+                        <ChevronRight size={12} />
+                      )}
+                    </button>
+                    <button
+                      className="tree-label"
+                      title={`${conn.name} · ${conn.sql?.driver ?? (conn.amazonS3 ? "S3" : "Azure Blob")}`}
+                      onClick={() => go(`/${conn.id}`)}
+                    >
+                      <Icon size={14} />
+                      <span>{conn.name}</span>
+                    </button>
+                  </RowMenu>
+                  {deleteId === conn.id && (
+                    <div className="inline-confirm">
+                      <span>Remove saved connection?</span>
+                      <div className="flex gap-2">
+                        <button
+                          className="text-button danger"
+                          disabled={deletePending}
+                          onClick={() => void remove(conn.id)}
+                        >
+                          Remove
+                        </button>
+                        <button
+                          className="text-button"
+                          disabled={deletePending}
+                          onClick={() => setDeleteId(null)}
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                      {error && (
+                        <p role="alert" className="danger">
+                          {error}
+                        </p>
+                      )}
+                    </div>
+                  )}
+                  {open && (
+                    <div className="tree-children">
+                      {conn.sql ? (
+                        <DatabaseBrowser
+                          connection={conn}
+                          expanded={expanded}
+                          onToggle={toggle}
+                          onSelectDatabase={(db) =>
+                            go(`/${conn.id}/${encodeURIComponent(db)}`)
+                          }
+                          onSelectTable={(db, tbl) =>
+                            go(
+                              `/${conn.id}/${encodeURIComponent(db)}/${encodeURIComponent(tbl)}`,
+                            )
+                          }
+                          favorites={favorites}
+                          onFavorite={favorite}
+                          onOpenQuery={(database, sql, title) =>
+                            onOpenQuery(conn.id, database, sql, title)
+                          }
+                        />
+                      ) : (
+                        <ObjectStorageBrowser
+                          connection={conn}
+                          expanded={expanded}
+                          onToggle={toggle}
+                          onSelectContainer={(container) =>
+                            go(
+                              `/${conn.id}/container/${encodeURIComponent(container)}`,
+                            )
+                          }
+                          onSelectPath={(container, path) =>
+                            go(
+                              `/${conn.id}/container/${encodeURIComponent(container)}/${encodePathSegments(path.replace(/^\/+/, ""))}`,
+                            )
+                          }
+                          onCreateContainer={() => setCreateContainerFor(conn)}
+                        />
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })
+          )}
+          {!connections.data?.length && !collapsed && (
+            <p className="tree-message">Add a connection to get started.</p>
+          )}
+        </nav>
       </aside>
     </>
   );

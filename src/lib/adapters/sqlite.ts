@@ -55,7 +55,7 @@ export const sqliteAdapter: DatabaseAdapter = {
       name: String(row.name),
       type: String(row.type || 'TEXT'),
       nullable: row.notnull === 0,
-      primaryKey: row.pk === 1,
+      primaryKey: Number(row.pk) > 0,
     }));
   },
 };

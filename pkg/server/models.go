@@ -42,12 +42,14 @@ type SQLConfig struct {
 }
 
 type SQLRequest struct {
+	MaxRows  int    `json:"maxRows,omitempty"`
 	Query    string `json:"query"`
 	Params   []any  `json:"params"`
 	Database string `json:"database,omitempty"` // Optional: specify which database to query
 }
 
 type SQLResponse struct {
+	Truncated    bool             `json:"truncated,omitempty"`
 	Columns      []string         `json:"columns,omitempty"`
 	Rows         []map[string]any `json:"rows,omitempty"`
 	RowsAffected int64            `json:"rows_affected,omitempty"`

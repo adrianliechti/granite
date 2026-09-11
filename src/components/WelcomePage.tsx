@@ -1,4 +1,4 @@
-import { Database, Package, Plus } from 'lucide-react';
+import { Database, Package, Plus } from "lucide-react";
 
 interface WelcomePageProps {
   onAddConnection: () => void;
@@ -28,7 +28,7 @@ export function WelcomePage({ onAddConnection }: WelcomePageProps) {
               Database Connections
             </h3>
             <p className="text-xs text-neutral-500 dark:text-neutral-500">
-              PostgreSQL, MySQL, SQLite, SQL Server, and Oracle
+              PostgreSQL, MySQL, SQLite, SQL Server, Oracle, and Trino
             </p>
           </div>
 
@@ -55,8 +55,8 @@ export function WelcomePage({ onAddConnection }: WelcomePageProps) {
         </button>
 
         {/* Quick tip */}
-        <p className="mt-6 text-xs text-neutral-400 dark:text-neutral-600">
-          You can have multiple connections open simultaneously
+        <p className="mt-6 text-xs muted">
+          Browse data, query with SQL, and manage files in one workspace.
         </p>
       </div>
     </main>

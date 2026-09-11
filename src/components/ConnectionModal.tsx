@@ -1,601 +1,454 @@
-import { useState } from 'react';
-import { useForm } from '@tanstack/react-form';
-import { Loader2, Database, Cloud, ChevronDown } from 'lucide-react';
-import type { Connection, DatabaseDriver, StorageProvider } from '../types';
-import { pingQuery } from '../lib/adapters';
-import { databaseFormSchema, s3FormSchema, azureFormSchema } from '../lib/schemas/connection';
+import { useState } from "react";
+import { Eye, EyeOff, Loader2 } from "lucide-react";
+import type { Connection, DatabaseDriver } from "../types";
+import { driverInfo, buildDSN, type ConnectionFields } from "../lib/connection";
+import { Dialog } from "./Dialog";
 
 interface ConnectionModalProps {
   connection?: Connection | null;
   onSave: (conn: Connection) => Promise<Connection>;
   onClose: () => void;
 }
-
-type ConnectionCategory = 'database' | 'storage';
-
-const driverInfo: Record<DatabaseDriver, { label: string; placeholder: string }> = {
-  postgres: { label: 'PostgreSQL', placeholder: 'postgres://user:password@localhost:5432/database' },
-  mysql: { label: 'MySQL', placeholder: 'user:password@tcp(localhost:3306)/database' },
-  sqlite: { label: 'SQLite', placeholder: '/path/to/database.db' },
-  sqlserver: { label: 'SQL Server', placeholder: 'sqlserver://user:password@localhost:1433?database=mydb' },
-  oracle: { label: 'Oracle', placeholder: 'oracle://user:password@localhost:1521/service_name' },
-  trino: { label: 'Trino', placeholder: 'http://user@localhost:8080?catalog=tpch&schema=tiny' },
-};
-
-const storageProviderInfo: Record<StorageProvider, { label: string; color: string }> = {
-  's3': { label: 'Amazon S3', color: 'bg-orange-500/10 border-orange-500/50 text-orange-600 dark:text-orange-400' },
-  'azure-blob': { label: 'Azure Blob', color: 'bg-blue-500/10 border-blue-500/50 text-blue-600 dark:text-blue-400' },
-};
-
-// CSS classes
-const inputClass = "w-full px-3 py-2 text-sm text-neutral-800 dark:text-neutral-100 placeholder-neutral-400 dark:placeholder-neutral-500 bg-neutral-50 dark:bg-white/5 border border-neutral-200 dark:border-white/10 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500 transition-colors";
-const inputMonoClass = `${inputClass} font-mono`;
-const errorClass = "text-[10px] text-red-500 dark:text-red-400 mt-1";
-
-interface FormValues {
-  category: ConnectionCategory;
-  name: string;
-  driver: DatabaseDriver;
-  dsn: string;
-  storageProvider: StorageProvider;
-  s3Region: string;
-  s3AccessKeyId: string;
-  s3SecretAccessKey: string;
-  s3Endpoint: string;
-  azureAccountName: string;
-  azureAccountKey: string;
-  azureConnectionString: string;
-}
-
-function getInitialValues(connection?: Connection | null): FormValues {
-  const defaults: FormValues = {
-    category: 'database',
-    name: '',
-    driver: 'postgres',
-    dsn: '',
-    storageProvider: 's3',
-    s3Region: '',
-    s3AccessKeyId: '',
-    s3SecretAccessKey: '',
-    s3Endpoint: '',
-    azureAccountName: '',
-    azureAccountKey: '',
-    azureConnectionString: '',
-  };
-
-  if (!connection) return defaults;
-
-  if (connection.sql) {
-    return { ...defaults, category: 'database', name: connection.name, driver: connection.sql.driver, dsn: connection.sql.dsn };
-  }
-  if (connection.amazonS3) {
-    return {
-      ...defaults,
-      category: 'storage',
-      name: connection.name,
-      storageProvider: 's3',
-      s3Region: connection.amazonS3.region,
-      s3AccessKeyId: connection.amazonS3.accessKeyId,
-      s3SecretAccessKey: connection.amazonS3.secretAccessKey,
-      s3Endpoint: connection.amazonS3.endpoint ?? '',
-    };
-  }
-  if (connection.azureBlob) {
-    return {
-      ...defaults,
-      category: 'storage',
-      name: connection.name,
-      storageProvider: 'azure-blob',
-      azureAccountName: connection.azureBlob.accountName,
-      azureAccountKey: connection.azureBlob.accountKey ?? '',
-      azureConnectionString: connection.azureBlob.connectionString ?? '',
-    };
-  }
-
-  return { ...defaults, name: connection.name };
-}
-
-// Validate against the schema matching the selected category/provider so
-// issues carry usable field paths (a union yields a single opaque issue)
-function validateForm(values: FormValues): Record<string, string> | undefined {
-  const schema =
-    values.category === 'database' ? databaseFormSchema :
-    values.storageProvider === 's3' ? s3FormSchema : azureFormSchema;
-
-  const result = schema.safeParse(values);
-  if (result.success) return undefined;
-
-  const errors: Record<string, string> = {};
-  for (const issue of result.error.issues) {
-    const path = issue.path.join('.');
-    if (path && !errors[path]) {
-      errors[path] = issue.message;
-    }
-  }
-  return Object.keys(errors).length > 0 ? errors : { form: 'Invalid connection details' };
-}
-
-export function ConnectionModal({ connection, onSave, onClose }: ConnectionModalProps) {
-  const [testStatus, setTestStatus] = useState<'idle' | 'testing' | 'success' | 'error'>('idle');
-  const [testError, setTestError] = useState<string | null>(null);
-  const [submitErrors, setSubmitErrors] = useState<Record<string, string>>({});
-
-  const isEditing = !!connection;
-
-  // Build connection payload from form values
-  const buildConnectionPayload = (value: FormValues): Omit<Connection, 'id' | 'createdAt'> => {
-    if (value.category === 'database') {
-      return { name: value.name, sql: { driver: value.driver, dsn: value.dsn } };
-    } else if (value.storageProvider === 's3') {
-      return {
-        name: value.name,
-        amazonS3: {
-          region: value.s3Region || 'us-east-1',
-          accessKeyId: value.s3AccessKeyId,
-          secretAccessKey: value.s3SecretAccessKey,
-          ...(value.s3Endpoint && { endpoint: value.s3Endpoint }),
-        },
-      };
-    } else {
-      return {
-        name: value.name,
-        azureBlob: {
-          accountName: value.azureAccountName,
-          ...(value.azureAccountKey && { accountKey: value.azureAccountKey }),
-          ...(value.azureConnectionString && { connectionString: value.azureConnectionString }),
-        },
-      };
-    }
-  };
-
-  const form = useForm({
-    defaultValues: getInitialValues(connection),
-    onSubmit: async () => {
-      await handleSaveAndTest();
-    },
+export function ConnectionModal({
+  connection,
+  onSave,
+  onClose,
+}: ConnectionModalProps) {
+  const [name, setName] = useState(connection?.name ?? "");
+  const [type, setType] = useState(
+    connection?.sql?.driver ??
+      (connection?.azureBlob
+        ? "azure-blob"
+        : connection?.amazonS3
+          ? "s3"
+          : "postgres"),
+  );
+  const [dsn, setDSN] = useState(connection?.sql?.dsn ?? ""),
+    [reveal, setReveal] = useState(false),
+    [builder, setBuilder] = useState(false);
+  const [fields, setFields] = useState<ConnectionFields>({
+    host: "localhost",
+    port: "",
+    user: "",
+    password: "",
+    database: "",
+    catalog: "",
+    tls: true,
   });
-
-  const resetTestStatus = () => {
-    setTestStatus('idle');
-    setTestError(null);
+  const [s3, setS3] = useState(
+    connection?.amazonS3 ?? {
+      region: "us-east-1",
+      accessKeyId: "",
+      secretAccessKey: "",
+      endpoint: "",
+    },
+  );
+  const [azure, setAzure] = useState(
+    connection?.azureBlob ?? {
+      accountName: "",
+      accountKey: "",
+      sasToken: "",
+      connectionString: "",
+    },
+  );
+  const [status, setStatus] = useState(""),
+    [error, setError] = useState(""),
+    [pending, setPending] = useState<"test" | "save" | null>(null);
+  const isSQL = type !== "s3" && type !== "azure-blob";
+  const driver = type as DatabaseDriver;
+  const reset = () => {
+    setStatus("");
+    setError("");
   };
-
-  // Save & Test: persist connection on server, test it, roll back if the test fails
-  const handleSaveAndTest = async () => {
-    const values = form.state.values;
-
-    // Validate first
-    const errors = validateForm(values);
-    if (errors) {
-      setSubmitErrors(errors);
-      return;
-    }
-    setSubmitErrors({});
-    setTestStatus('testing');
-    setTestError(null);
-
-    const isNew = !connection?.id;
-    const conn: Connection = {
-      ...buildConnectionPayload(values),
-      id: connection?.id ?? crypto.randomUUID(),
-      createdAt: connection?.createdAt ?? new Date().toISOString(),
-    };
-
-    try {
-      // 1. Persist to the server so the test endpoints can use it
-      const saveResponse = await fetch(
-        isNew ? '/connections' : `/connections/${encodeURIComponent(conn.id)}`,
-        {
-          method: isNew ? 'POST' : 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(conn),
-        }
+  const payload = (save: boolean): Connection => {
+    if (save && !name.trim()) throw new Error("Enter a connection name.");
+    if (isSQL && !dsn.trim()) throw new Error("Enter a connection string.");
+    if (type === "s3" && (!s3.accessKeyId || !s3.secretAccessKey))
+      throw new Error("Enter an access key ID and secret access key.");
+    if (
+      type === "azure-blob" &&
+      !azure.connectionString &&
+      (!azure.accountName || (!azure.accountKey && !azure.sasToken))
+    )
+      throw new Error(
+        "Enter a connection string, or an account name and key / SAS token.",
       );
-
-      if (!saveResponse.ok) {
-        const data = await saveResponse.json().catch(() => ({}));
-        throw new Error(data.message || 'Failed to save connection');
+    return {
+      id: connection?.id ?? crypto.randomUUID(),
+      name: name.trim(),
+      createdAt: connection?.createdAt,
+      ...(isSQL
+        ? { sql: { driver, dsn: dsn.trim() } }
+        : type === "s3"
+          ? { amazonS3: s3 }
+          : { azureBlob: azure }),
+    };
+  };
+  const submit = async (action: "test" | "save") => {
+    setPending(action);
+    reset();
+    try {
+      const conn = payload(action === "save");
+      const response = await fetch(
+        action === "test"
+          ? "/connections/test"
+          : connection
+            ? `/connections/${encodeURIComponent(connection.id)}`
+            : "/connections",
+        {
+          method: action === "save" && connection ? "PUT" : "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(conn),
+          signal: AbortSignal.timeout(20_000),
+        },
+      );
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.message || "Connection failed");
+      if (action === "test") setStatus("Connection successful");
+      else {
+        await onSave(result);
+        onClose();
       }
-
-      // 2. Test the connection
-      if (values.category === 'database') {
-        const response = await fetch(`/sql/${encodeURIComponent(conn.id)}/query`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ query: pingQuery(values.driver), params: [] }),
-        });
-        const data = await response.json();
-        if (data.message) {
-          throw new Error(data.message);
-        }
-      } else {
-        const response = await fetch(`/storage/${encodeURIComponent(conn.id)}/containers`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-        });
-        if (!response.ok) {
-          const data = await response.json().catch(() => ({}));
-          throw new Error(data.message || 'Connection failed');
-        }
-      }
-
-      // 3. Success! Sync local state (same id, so no duplicate is created)
-      setTestStatus('success');
-      await onSave(conn);
-      setTimeout(() => onClose(), 500);
     } catch (err) {
-      setTestStatus('error');
-      setTestError(err instanceof Error ? err.message : 'Connection failed');
-
-      // 4. Roll the server back to its previous state
-      try {
-        if (isNew) {
-          await fetch(`/connections/${encodeURIComponent(conn.id)}`, { method: 'DELETE' });
-        } else if (connection) {
-          await fetch(`/connections/${encodeURIComponent(connection.id)}`, {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(connection),
-          });
-        }
-      } catch {
-        // Ignore rollback errors
-      }
+      setError(err instanceof Error ? err.message : "Connection failed");
+    } finally {
+      setPending(null);
     }
   };
-
+  const field = (
+    key: keyof ConnectionFields,
+    label: string,
+    secret = false,
+  ) => (
+    <label className="form-field">
+      {label}
+      <input
+        className="field"
+        type={secret && !reveal ? "password" : "text"}
+        value={String(fields[key])}
+        onChange={(e) => {
+          setFields((current) => ({ ...current, [key]: e.target.value }));
+          reset();
+        }}
+        autoComplete="off"
+        placeholder={key === "port" ? driverInfo[driver]?.port : undefined}
+      />
+    </label>
+  );
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={onClose} />
-      
-      <div className="relative w-full max-w-md bg-white dark:bg-[#1a1a1a] rounded-2xl shadow-2xl border border-neutral-200 dark:border-white/10 overflow-hidden">
-        {/* Form */}
-        <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            form.handleSubmit();
-          }}
-          className="p-5 space-y-4"
-        >
-          {/* Subscribe to form state for conditional rendering */}
-          <form.Subscribe selector={(state) => state.values}>
-            {(values) => (
-              <>
-                {/* Top Bar: Type Switcher */}
-                {!isEditing && (
-                  <div className="flex gap-2 p-1 bg-neutral-100 dark:bg-white/5 rounded-xl -mt-1">
-                    <button
-                      type="button"
-                      onClick={() => { form.setFieldValue('category', 'database'); resetTestStatus(); }}
-                      className={`flex-1 flex items-center justify-center gap-2 px-3 py-2 text-sm font-medium rounded-lg transition-colors ${
-                        values.category === 'database'
-                          ? 'bg-white dark:bg-white/10 text-neutral-800 dark:text-neutral-100 shadow-sm'
-                          : 'text-neutral-500 hover:text-neutral-700 dark:hover:text-neutral-300'
-                      }`}
-                    >
-                      <Database className="w-4 h-4" />
-                      Database
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => { form.setFieldValue('category', 'storage'); resetTestStatus(); }}
-                      className={`flex-1 flex items-center justify-center gap-2 px-3 py-2 text-sm font-medium rounded-lg transition-colors ${
-                        values.category === 'storage'
-                          ? 'bg-white dark:bg-white/10 text-neutral-800 dark:text-neutral-100 shadow-sm'
-                          : 'text-neutral-500 hover:text-neutral-700 dark:hover:text-neutral-300'
-                      }`}
-                    >
-                      <Cloud className="w-4 h-4" />
-                      Storage
-                    </button>
-                  </div>
-                )}
-
-                {/* Database Form */}
-                {values.category === 'database' && (
-                  <>
-                    {/* Database Type - only show when creating new */}
-                    {!isEditing && (
-                      <form.Field name="driver">
-                        {(field) => (
-                          <div className="space-y-1.5">
-                            <label className="block text-xs font-medium text-neutral-600 dark:text-neutral-400">
-                              Database Type
-                            </label>
-                            <div className="relative">
-                              <select
-                                value={field.state.value}
-                                onChange={(e) => { field.handleChange(e.target.value as DatabaseDriver); resetTestStatus(); }}
-                                className={`${inputClass} appearance-none pr-9 cursor-pointer`}
-                              >
-                                {(Object.keys(driverInfo) as DatabaseDriver[]).map((key) => (
-                                  <option key={key} value={key}>
-                                    {driverInfo[key].label}
-                                  </option>
-                                ))}
-                              </select>
-                              <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-neutral-400 pointer-events-none" />
-                            </div>
-                          </div>
-                        )}
-                      </form.Field>
-                    )}
-
-                    {/* Name Field */}
-                    <form.Field name="name">
-                      {(field) => (
-                        <div className="space-y-1.5">
-                          <label className="block text-xs font-medium text-neutral-600 dark:text-neutral-400">
-                            Connection Name
-                          </label>
-                          <input
-                            type="text"
-                            placeholder="My Database"
-                            value={field.state.value}
-                            onChange={(e) => field.handleChange(e.target.value)}
-                            onBlur={field.handleBlur}
-                            className={inputClass}
-                            autoFocus
-                          />
-                          {submitErrors.name && <p className={errorClass}>{submitErrors.name}</p>}
-                        </div>
-                      )}
-                    </form.Field>
-
-                    <form.Field name="dsn">
-                      {(field) => (
-                        <div className="space-y-1.5">
-                          <label className="block text-xs font-medium text-neutral-600 dark:text-neutral-400">
-                            Connection String
-                          </label>
-                          <input
-                            type="text"
-                            placeholder={driverInfo[values.driver].placeholder}
-                            value={field.state.value}
-                            onChange={(e) => { field.handleChange(e.target.value); resetTestStatus(); }}
-                            onBlur={field.handleBlur}
-                            className={inputMonoClass}
-                          />
-                          {submitErrors.dsn && <p className={errorClass}>{submitErrors.dsn}</p>}
-                        </div>
-                      )}
-                    </form.Field>
-                  </>
-                )}
-
-                {/* Storage Form */}
-                {values.category === 'storage' && (
-                  <>
-                    {/* Storage Provider - only show when creating new */}
-                    {!isEditing && (
-                      <form.Field name="storageProvider">
-                        {(field) => (
-                          <div className="space-y-1.5">
-                            <label className="block text-xs font-medium text-neutral-600 dark:text-neutral-400">
-                              Storage Provider
-                            </label>
-                            <div className="grid grid-cols-2 gap-1.5">
-                              {(Object.keys(storageProviderInfo) as StorageProvider[]).map((key) => (
-                                <button
-                                  key={key}
-                                  type="button"
-                                  onClick={() => { field.handleChange(key); resetTestStatus(); }}
-                                  className={`px-3 py-2 text-xs font-semibold rounded-lg border transition-all ${
-                                    values.storageProvider === key
-                                      ? storageProviderInfo[key].color
-                                      : 'bg-neutral-50 dark:bg-white/5 border-neutral-200 dark:border-white/10 text-neutral-500 hover:bg-neutral-100 dark:hover:bg-white/10'
-                                  }`}
-                                >
-                                  {storageProviderInfo[key].label}
-                                </button>
-                              ))}
-                            </div>
-                          </div>
-                        )}
-                      </form.Field>
-                    )}
-
-                    {/* Name Field */}
-                    <form.Field name="name">
-                      {(field) => (
-                        <div className="space-y-1.5">
-                          <label className="block text-xs font-medium text-neutral-600 dark:text-neutral-400">
-                            Connection Name
-                          </label>
-                          <input
-                            type="text"
-                            placeholder="My Storage"
-                            value={field.state.value}
-                            onChange={(e) => field.handleChange(e.target.value)}
-                            onBlur={field.handleBlur}
-                            className={inputClass}
-                            autoFocus
-                          />
-                          {submitErrors.name && <p className={errorClass}>{submitErrors.name}</p>}
-                        </div>
-                      )}
-                    </form.Field>
-
-                    {/* S3 Fields */}
-                    {values.storageProvider === 's3' && (
-                      <>
-                        <form.Field name="s3Endpoint">
-                          {(field) => (
-                            <div className="space-y-1.5">
-                              <label className="block text-xs font-medium text-neutral-600 dark:text-neutral-400">
-                                Custom Endpoint <span className="text-neutral-400">(optional)</span>
-                              </label>
-                              <input
-                                type="text"
-                                placeholder="https://s3.example.com"
-                                value={field.state.value}
-                                onChange={(e) => { field.handleChange(e.target.value); resetTestStatus(); }}
-                                onBlur={field.handleBlur}
-                                className={inputClass}
-                              />
-                            </div>
-                          )}
-                        </form.Field>
-                        <form.Field name="s3Region">
-                          {(field) => (
-                            <div className="space-y-1.5">
-                              <label className="block text-xs font-medium text-neutral-600 dark:text-neutral-400">
-                                Region <span className="text-neutral-400">(optional)</span>
-                              </label>
-                              <input
-                                type="text"
-                                placeholder="us-east-1"
-                                value={field.state.value}
-                                onChange={(e) => { field.handleChange(e.target.value); resetTestStatus(); }}
-                                onBlur={field.handleBlur}
-                                className={inputClass}
-                              />
-                              {submitErrors.s3Region && <p className={errorClass}>{submitErrors.s3Region}</p>}
-                            </div>
-                          )}
-                        </form.Field>
-                        <form.Field name="s3AccessKeyId">
-                          {(field) => (
-                            <div className="space-y-1.5">
-                              <label className="block text-xs font-medium text-neutral-600 dark:text-neutral-400">Access Key ID</label>
-                              <input
-                                type="text"
-                                placeholder="AKIAIOSFODNN7EXAMPLE"
-                                value={field.state.value}
-                                onChange={(e) => { field.handleChange(e.target.value); resetTestStatus(); }}
-                                onBlur={field.handleBlur}
-                                className={inputMonoClass}
-                              />
-                              {submitErrors.s3AccessKeyId && <p className={errorClass}>{submitErrors.s3AccessKeyId}</p>}
-                            </div>
-                          )}
-                        </form.Field>
-                        <form.Field name="s3SecretAccessKey">
-                          {(field) => (
-                            <div className="space-y-1.5">
-                              <label className="block text-xs font-medium text-neutral-600 dark:text-neutral-400">Secret Access Key</label>
-                              <input
-                                type="password"
-                                placeholder="••••••••••••••••"
-                                value={field.state.value}
-                                onChange={(e) => { field.handleChange(e.target.value); resetTestStatus(); }}
-                                onBlur={field.handleBlur}
-                                className={inputMonoClass}
-                              />
-                              {submitErrors.s3SecretAccessKey && <p className={errorClass}>{submitErrors.s3SecretAccessKey}</p>}
-                            </div>
-                          )}
-                        </form.Field>
-                      </>
-                    )}
-
-                    {/* Azure Fields */}
-                    {values.storageProvider === 'azure-blob' && (
-                      <>
-                        <form.Field name="azureAccountName">
-                          {(field) => (
-                            <div className="space-y-1.5">
-                              <label className="block text-xs font-medium text-neutral-600 dark:text-neutral-400">Storage Account Name</label>
-                              <input
-                                type="text"
-                                placeholder="mystorageaccount"
-                                value={field.state.value}
-                                onChange={(e) => { field.handleChange(e.target.value); resetTestStatus(); }}
-                                onBlur={field.handleBlur}
-                                className={inputClass}
-                              />
-                              {submitErrors.azureAccountName && <p className={errorClass}>{submitErrors.azureAccountName}</p>}
-                            </div>
-                          )}
-                        </form.Field>
-                        <form.Field name="azureAccountKey">
-                          {(field) => (
-                            <div className="space-y-1.5">
-                              <label className="block text-xs font-medium text-neutral-600 dark:text-neutral-400">
-                                Account Key <span className="text-neutral-400">(or use connection string)</span>
-                              </label>
-                              <input
-                                type="password"
-                                placeholder="••••••••••••••••"
-                                value={field.state.value}
-                                onChange={(e) => { field.handleChange(e.target.value); resetTestStatus(); }}
-                                onBlur={field.handleBlur}
-                                className={inputMonoClass}
-                              />
-                              {submitErrors.azureAccountKey && <p className={errorClass}>{submitErrors.azureAccountKey}</p>}
-                            </div>
-                          )}
-                        </form.Field>
-                        <form.Field name="azureConnectionString">
-                          {(field) => (
-                            <div className="space-y-1.5">
-                              <label className="block text-xs font-medium text-neutral-600 dark:text-neutral-400">
-                                Connection String <span className="text-neutral-400">(alternative)</span>
-                              </label>
-                              <input
-                                type="password"
-                                placeholder="DefaultEndpointsProtocol=https;AccountName=..."
-                                value={field.state.value}
-                                onChange={(e) => { field.handleChange(e.target.value); resetTestStatus(); }}
-                                onBlur={field.handleBlur}
-                                className={inputMonoClass}
-                              />
-                            </div>
-                          )}
-                        </form.Field>
-                      </>
-                    )}
-                  </>
-                )}
-              </>
-            )}
-          </form.Subscribe>
-
-          {/* Test Status Messages */}
-          {testStatus === 'success' && (
-            <p className="text-xs text-blue-600 dark:text-blue-400">✓ Connection successful</p>
-          )}
-          {testStatus === 'error' && testError && (
-            <p className="text-xs text-red-500 dark:text-red-400 break-all">{testError}</p>
-          )}
-
-          {/* Actions */}
-          <form.Subscribe selector={(state) => state.values}>
-            {(values) => {
-              const formValid = (() => {
-                if (!values.name) return false;
-                if (values.category === 'database') return !!values.dsn;
-                if (values.storageProvider === 's3') return !!values.s3AccessKeyId && !!values.s3SecretAccessKey;
-                return !!values.azureAccountName && (!!values.azureAccountKey || !!values.azureConnectionString);
-              })();
-
-              return (
-                <div className="flex justify-end gap-3 pt-4">
+    <Dialog
+      title={connection ? "Edit connection" : "Add connection"}
+      onClose={onClose}
+      busy={!!pending}
+    >
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          void submit("save");
+        }}
+        className="p-4 space-y-4"
+      >
+        <fieldset disabled={!!pending} className="space-y-4">
+          <label className="form-field">
+            Name
+            <input
+              className="field"
+              value={name}
+              onChange={(e) => {
+                setName(e.target.value);
+                reset();
+              }}
+              placeholder="e.g. Local development"
+              autoFocus
+              required
+            />
+          </label>
+          <label className="form-field">
+            Type
+            <select
+              className="field"
+              aria-label="Connection type"
+              value={type}
+              onChange={(e) => {
+                setType(e.target.value as typeof type);
+                setBuilder(false);
+                reset();
+              }}
+            >
+              <optgroup label="Database">
+                {Object.entries(driverInfo).map(([id, info]) => (
+                  <option key={id} value={id}>
+                    {info.label}
+                  </option>
+                ))}
+              </optgroup>
+              <optgroup label="Object storage">
+                <option value="s3">Amazon S3 / S3 compatible</option>
+                <option value="azure-blob">Azure Blob Storage</option>
+              </optgroup>
+            </select>
+          </label>
+          {isSQL ? (
+            <>
+              <div className="form-field">
+                <label htmlFor="connection-dsn">
+                  {driver === "sqlite" ? "Database file" : "Connection string"}
+                </label>
+                <div className="flex items-center gap-1">
+                  <input
+                    id="connection-dsn"
+                    className="field font-mono min-w-0 flex-1"
+                    type={reveal || driver === "sqlite" ? "text" : "password"}
+                    value={dsn}
+                    onChange={(e) => {
+                      setDSN(e.target.value);
+                      reset();
+                    }}
+                    placeholder={driverInfo[driver].placeholder}
+                    autoComplete="off"
+                    spellCheck={false}
+                    required
+                  />
                   <button
+                    className="icon-button"
                     type="button"
-                    onClick={onClose}
-                    className="px-4 py-2 text-sm font-medium text-neutral-600 dark:text-neutral-400 hover:text-neutral-800 dark:hover:text-neutral-200 transition-colors"
+                    aria-label={
+                      reveal ? "Hide credentials" : "Show credentials"
+                    }
+                    onClick={() => setReveal(!reveal)}
                   >
-                    Cancel
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleSaveAndTest}
-                    disabled={!formValid || testStatus === 'testing'}
-                    className="flex items-center gap-2 px-5 py-2 text-sm font-medium bg-neutral-800 dark:bg-neutral-200 text-white dark:text-neutral-900 rounded-lg hover:bg-neutral-700 dark:hover:bg-neutral-300 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                  >
-                    {testStatus === 'testing' && (
-                      <Loader2 className="w-4 h-4 animate-spin" />
-                    )}
-                    {testStatus === 'testing' ? 'Saving...' : 'Save'}
+                    {reveal ? <EyeOff size={15} /> : <Eye size={15} />}
                   </button>
                 </div>
-              );
-            }}
-          </form.Subscribe>
-        </form>
-      </div>
-    </div>
+                <p className="muted text-xs">
+                  {driver === "sqlite"
+                    ? "Path on the machine running Granite."
+                    : driverInfo[driver].placeholder}
+                </p>
+              </div>
+              {driver !== "sqlite" && (
+                <>
+                  <button
+                    className="text-button"
+                    type="button"
+                    aria-expanded={builder}
+                    onClick={() => setBuilder(!builder)}
+                  >
+                    {builder
+                      ? "Hide connection fields"
+                      : "Build from connection fields"}
+                  </button>
+                  {builder && (
+                    <div className="connection-builder">
+                      <div className="grid grid-cols-[1fr_90px] gap-3">
+                        {field("host", "Host")}
+                        {field("port", "Port")}
+                      </div>
+                      <div className="grid grid-cols-2 gap-3">
+                        {field("user", "User")}
+                        {field("password", "Password", true)}
+                      </div>
+                      {field(
+                        "database",
+                        driver === "oracle"
+                          ? "Service name"
+                          : driver === "trino"
+                            ? "Schema"
+                            : "Database",
+                      )}
+                      {driver === "trino" && field("catalog", "Catalog")}
+                      <div className="flex items-center justify-between">
+                        <label className="inline-check">
+                          <input
+                            type="checkbox"
+                            checked={fields.tls}
+                            onChange={(e) =>
+                              setFields({ ...fields, tls: e.target.checked })
+                            }
+                          />
+                          TLS
+                        </label>
+                        <button
+                          className="text-button"
+                          type="button"
+                          onClick={() => {
+                            try {
+                              setDSN(buildDSN(driver, fields));
+                              reset();
+                            } catch (err) {
+                              setError(
+                                err instanceof Error
+                                  ? err.message
+                                  : "Invalid fields",
+                              );
+                            }
+                          }}
+                        >
+                          Use these fields
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </>
+              )}
+            </>
+          ) : type === "s3" ? (
+            <>
+              <label className="form-field">
+                Region
+                <input
+                  className="field"
+                  value={s3.region}
+                  onChange={(e) => {
+                    setS3({ ...s3, region: e.target.value });
+                    reset();
+                  }}
+                />
+              </label>
+              <label className="form-field">
+                Access key ID
+                <input
+                  className="field font-mono"
+                  value={s3.accessKeyId}
+                  onChange={(e) => {
+                    setS3({ ...s3, accessKeyId: e.target.value });
+                    reset();
+                  }}
+                  autoComplete="off"
+                />
+              </label>
+              <label className="form-field">
+                Secret access key
+                <input
+                  className="field font-mono"
+                  type={reveal ? "text" : "password"}
+                  value={s3.secretAccessKey}
+                  onChange={(e) => {
+                    setS3({ ...s3, secretAccessKey: e.target.value });
+                    reset();
+                  }}
+                  autoComplete="off"
+                />
+              </label>
+              <label className="form-field">
+                Endpoint <span className="muted">Optional</span>
+                <input
+                  className="field"
+                  value={s3.endpoint ?? ""}
+                  onChange={(e) => {
+                    setS3({ ...s3, endpoint: e.target.value });
+                    reset();
+                  }}
+                  placeholder="https://s3.example.com"
+                />
+              </label>
+            </>
+          ) : (
+            <>
+              <label className="form-field">
+                Connection string{" "}
+                <span className="muted">Or use account details below</span>
+                <input
+                  className="field font-mono"
+                  type={reveal ? "text" : "password"}
+                  value={azure.connectionString ?? ""}
+                  onChange={(e) => {
+                    setAzure({ ...azure, connectionString: e.target.value });
+                    reset();
+                  }}
+                  autoComplete="off"
+                />
+              </label>
+              <label className="form-field">
+                Account name
+                <input
+                  className="field"
+                  value={azure.accountName}
+                  onChange={(e) => {
+                    setAzure({ ...azure, accountName: e.target.value });
+                    reset();
+                  }}
+                />
+              </label>
+              <label className="form-field">
+                Account key
+                <input
+                  className="field font-mono"
+                  type={reveal ? "text" : "password"}
+                  value={azure.accountKey ?? ""}
+                  onChange={(e) => {
+                    setAzure({ ...azure, accountKey: e.target.value });
+                    reset();
+                  }}
+                  autoComplete="off"
+                />
+              </label>
+              <label className="form-field">
+                SAS token{" "}
+                <span className="muted">Alternative to account key</span>
+                <input
+                  className="field font-mono"
+                  type={reveal ? "text" : "password"}
+                  value={azure.sasToken ?? ""}
+                  onChange={(e) => {
+                    setAzure({ ...azure, sasToken: e.target.value });
+                    reset();
+                  }}
+                  autoComplete="off"
+                />
+              </label>
+            </>
+          )}
+          {!isSQL && (
+            <button
+              type="button"
+              className="text-button"
+              onClick={() => setReveal(!reveal)}
+            >
+              {reveal ? <EyeOff size={14} /> : <Eye size={14} />}
+              {reveal ? "Hide credentials" : "Show credentials"}
+            </button>
+          )}
+        </fieldset>
+        {error && (
+          <p className="error-banner" role="alert">
+            {error}
+          </p>
+        )}
+        {status && (
+          <p role="status" className="text-xs">
+            {status}
+          </p>
+        )}
+        <div className="flex items-center gap-2 pt-1">
+          <button
+            type="button"
+            className="text-button"
+            onClick={() => void submit("test")}
+            disabled={!!pending}
+          >
+            {pending === "test" && (
+              <Loader2 size={14} className="animate-spin" />
+            )}
+            Test connection
+          </button>
+          <span className="flex-1" />
+          <button
+            type="button"
+            className="text-button"
+            onClick={onClose}
+            disabled={!!pending}
+          >
+            Cancel
+          </button>
+          <button className="button" disabled={!!pending}>
+            {pending === "save" && (
+              <Loader2 size={14} className="animate-spin" />
+            )}
+            Save
+          </button>
+        </div>
+      </form>
+    </Dialog>
   );
 }

@@ -1,5 +1,5 @@
 import type { DatabaseAdapter, ColumnInfo, TableView } from './types';
-import { sqlLiteral } from './types';
+import { sqlLiteral } from './types.ts';
 
 export const mysqlAdapter: DatabaseAdapter = {
   driver: 'mysql',
@@ -33,7 +33,7 @@ export const mysqlAdapter: DatabaseAdapter = {
   },
 
   createDatabaseQuery(name: string) {
-    return `CREATE DATABASE \`${name}\``;
+    return `CREATE DATABASE ${this.quoteIdentifier(name)}`;
   },
 
   listConstraintsQuery(table: string) {

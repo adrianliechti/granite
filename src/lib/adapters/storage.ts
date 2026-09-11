@@ -2,7 +2,7 @@ import type {
   StorageContainer,
   StorageObject,
   StorageObjectDetails,
-} from '../../types';
+} from "../../types";
 
 // ============================================================================
 // Storage API Client
@@ -13,6 +13,7 @@ export interface ListObjectsOptions {
   delimiter?: string;
   maxKeys?: number;
   continuationToken?: string;
+  signal?: AbortSignal;
 }
 
 export interface ListObjectsResult {
@@ -23,32 +24,43 @@ export interface ListObjectsResult {
 }
 
 // List all containers
-export async function listContainers(connectionId: string): Promise<StorageContainer[]> {
-  const response = await fetch(`/storage/${encodeURIComponent(connectionId)}/containers`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({}),
-  });
+export async function listContainers(
+  connectionId: string,
+): Promise<StorageContainer[]> {
+  const response = await fetch(
+    `/storage/${encodeURIComponent(connectionId)}/containers`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    },
+  );
 
   if (!response.ok) {
     const error = await response.json();
-    throw new Error(error.message || 'Failed to list containers');
+    throw new Error(error.message || "Failed to list containers");
   }
 
-  return response.json();
+  return (await response.json()) ?? [];
 }
 
 // Create a new container
-export async function createContainer(connectionId: string, name: string): Promise<void> {
-  const response = await fetch(`/storage/${encodeURIComponent(connectionId)}/containers/create`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name }),
-  });
+export async function createContainer(
+  connectionId: string,
+  name: string,
+): Promise<void> {
+  const response = await fetch(
+    `/storage/${encodeURIComponent(connectionId)}/containers/create`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name }),
+    },
+  );
 
   if (!response.ok) {
     const error = await response.json();
-    throw new Error(error.message || 'Failed to create container');
+    throw new Error(error.message || "Failed to create container");
   }
 }
 
@@ -56,43 +68,55 @@ export async function createContainer(connectionId: string, name: string): Promi
 export async function listObjects(
   connectionId: string,
   container: string,
-  options: ListObjectsOptions = {}
+  options: ListObjectsOptions = {},
 ): Promise<ListObjectsResult> {
-  const response = await fetch(`/storage/${encodeURIComponent(connectionId)}/objects`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      container,
-      prefix: options.prefix || '',
-      delimiter: options.delimiter ?? '/',
-      maxKeys: options.maxKeys || 1000,
-      continuationToken: options.continuationToken,
-    }),
-  });
+  const response = await fetch(
+    `/storage/${encodeURIComponent(connectionId)}/objects`,
+    {
+      method: "POST",
+      signal: options.signal,
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        container,
+        prefix: options.prefix || "",
+        delimiter: options.delimiter ?? "/",
+        maxKeys: options.maxKeys || 1000,
+        continuationToken: options.continuationToken,
+      }),
+    },
+  );
 
   if (!response.ok) {
     const error = await response.json();
-    throw new Error(error.message || 'Failed to list objects');
+    throw new Error(error.message || "Failed to list objects");
   }
 
-  return response.json();
+  const data = await response.json();
+  return {
+    ...data,
+    objects: data.objects ?? [],
+    prefixes: data.prefixes ?? [],
+  };
 }
 
 // Get detailed metadata for a specific object
 export async function getObjectDetails(
   connectionId: string,
   container: string,
-  key: string
+  key: string,
 ): Promise<StorageObjectDetails> {
-  const response = await fetch(`/storage/${encodeURIComponent(connectionId)}/object/details`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ container, key }),
-  });
+  const response = await fetch(
+    `/storage/${encodeURIComponent(connectionId)}/object/details`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ container, key }),
+    },
+  );
 
   if (!response.ok) {
     const error = await response.json();
-    throw new Error(error.message || 'Failed to get object details');
+    throw new Error(error.message || "Failed to get object details");
   }
 
   return response.json();
@@ -103,17 +127,20 @@ export async function getPresignedUrl(
   connectionId: string,
   container: string,
   key: string,
-  expiresIn: number = 3600
+  expiresIn: number = 3600,
 ): Promise<string> {
-  const response = await fetch(`/storage/${encodeURIComponent(connectionId)}/object/presign`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ container, key, expiresIn }),
-  });
+  const response = await fetch(
+    `/storage/${encodeURIComponent(connectionId)}/object/presign`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ container, key, expiresIn }),
+    },
+  );
 
   if (!response.ok) {
     const error = await response.json();
-    throw new Error(error.message || 'Failed to generate presigned URL');
+    throw new Error(error.message || "Failed to generate presigned URL");
   }
 
   const result = await response.json();
@@ -125,21 +152,24 @@ export async function uploadObject(
   connectionId: string,
   container: string,
   key: string,
-  file: File
+  file: File,
 ): Promise<void> {
   const formData = new FormData();
-  formData.append('file', file);
-  formData.append('container', container);
-  formData.append('key', key);
-  
-  const response = await fetch(`/storage/${encodeURIComponent(connectionId)}/upload`, {
-    method: 'POST',
-    body: formData,
-  });
+  formData.append("file", file);
+  formData.append("container", container);
+  formData.append("key", key);
+
+  const response = await fetch(
+    `/storage/${encodeURIComponent(connectionId)}/upload`,
+    {
+      method: "POST",
+      body: formData,
+    },
+  );
 
   if (!response.ok) {
     const error = await response.json();
-    throw new Error(error.message || 'Failed to upload file');
+    throw new Error(error.message || "Failed to upload file");
   }
 }
 
@@ -147,17 +177,20 @@ export async function uploadObject(
 export async function deleteObjects(
   connectionId: string,
   container: string,
-  keys: string[]
+  keys: string[],
 ): Promise<void> {
-  const response = await fetch(`/storage/${encodeURIComponent(connectionId)}/object/delete`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ container, keys }),
-  });
+  const response = await fetch(
+    `/storage/${encodeURIComponent(connectionId)}/object/delete`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ container, keys }),
+    },
+  );
 
   if (!response.ok) {
     const error = await response.json();
-    throw new Error(error.message || 'Failed to delete objects');
+    throw new Error(error.message || "Failed to delete objects");
   }
 }
 
@@ -165,13 +198,13 @@ export async function deleteObjects(
 export async function deletePrefix(
   connectionId: string,
   container: string,
-  prefix: string
+  prefix: string,
 ): Promise<void> {
   // Repeatedly list (flat, no delimiter) and delete until nothing is left
   for (;;) {
     const result = await listObjects(connectionId, container, {
       prefix,
-      delimiter: '', // No delimiter means get all nested objects
+      delimiter: "", // No delimiter means get all nested objects
       maxKeys: 1000,
     });
 
@@ -179,7 +212,11 @@ export async function deletePrefix(
       break;
     }
 
-    await deleteObjects(connectionId, container, result.objects.map(obj => obj.key));
+    await deleteObjects(
+      connectionId,
+      container,
+      result.objects.map((obj) => obj.key),
+    );
 
     if (!result.isTruncated) {
       break;
@@ -197,41 +234,44 @@ export async function deletePrefix(
 
 // Encode a slash-separated object path for use in a URL (keeps slashes)
 export function encodePathSegments(path: string): string {
-  return path.split('/').map(encodeURIComponent).join('/');
+  return path.split("/").map(encodeURIComponent).join("/");
 }
 
 // Parse a path into container and prefix
-export function parseStoragePath(path: string): { container: string; prefix: string } {
-  const parts = path.split('/').filter(Boolean);
-  const container = parts[0] || '';
-  const prefix = parts.slice(1).join('/');
-  return { container, prefix: prefix ? prefix + '/' : '' };
+export function parseStoragePath(path: string): {
+  container: string;
+  prefix: string;
+} {
+  const parts = path.split("/").filter(Boolean);
+  const container = parts[0] || "";
+  const prefix = parts.slice(1).join("/");
+  return { container, prefix: prefix ? prefix + "/" : "" };
 }
 
 // Build a path from container and prefix
 export function buildStoragePath(container: string, prefix: string): string {
   if (!prefix) return container;
-  return `${container}/${prefix}`.replace(/\/+$/, '');
+  return `${container}/${prefix}`.replace(/\/+$/, "");
 }
 
 // Get parent path
 export function getParentPath(path: string): string {
-  const parts = path.split('/').filter(Boolean);
-  if (parts.length <= 1) return '';
-  return parts.slice(0, -1).join('/');
+  const parts = path.split("/").filter(Boolean);
+  if (parts.length <= 1) return "";
+  return parts.slice(0, -1).join("/");
 }
 
 // Get display name from key/path
 export function getDisplayName(key: string): string {
-  const parts = key.split('/').filter(Boolean);
+  const parts = key.split("/").filter(Boolean);
   return parts[parts.length - 1] || key;
 }
 
 // Format file size
 export function formatFileSize(bytes: number): string {
-  if (bytes === 0) return '0 B';
+  if (bytes === 0) return "0 B";
   const k = 1024;
-  const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+  const sizes = ["B", "KB", "MB", "GB", "TB"];
   const i = Math.floor(Math.log(bytes) / Math.log(k));
   return `${parseFloat((bytes / Math.pow(k, i)).toFixed(2))} ${sizes[i]}`;
 }
@@ -239,49 +279,77 @@ export function formatFileSize(bytes: number): string {
 // Get file extension from key
 export function getFileExtension(key: string): string {
   const name = getDisplayName(key);
-  const lastDot = name.lastIndexOf('.');
-  return lastDot > 0 ? name.slice(lastDot + 1).toLowerCase() : '';
+  const lastDot = name.lastIndexOf(".");
+  return lastDot > 0 ? name.slice(lastDot + 1).toLowerCase() : "";
 }
 
 // Get icon type based on file extension
-export function getFileIconType(key: string): 'folder' | 'image' | 'document' | 'code' | 'archive' | 'file' {
-  if (key.endsWith('/')) return 'folder';
-  
+export function getFileIconType(
+  key: string,
+): "folder" | "image" | "document" | "code" | "archive" | "file" {
+  if (key.endsWith("/")) return "folder";
+
   const ext = getFileExtension(key);
-  
-  const imageExts = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'ico', 'bmp'];
-  const documentExts = ['pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'txt', 'csv'];
-  const codeExts = ['js', 'ts', 'jsx', 'tsx', 'html', 'css', 'json', 'xml', 'yaml', 'yml', 'md', 'py', 'go', 'rs', 'java'];
-  const archiveExts = ['zip', 'tar', 'gz', 'rar', '7z', 'bz2'];
-  
-  if (imageExts.includes(ext)) return 'image';
-  if (documentExts.includes(ext)) return 'document';
-  if (codeExts.includes(ext)) return 'code';
-  if (archiveExts.includes(ext)) return 'archive';
-  
-  return 'file';
+
+  const imageExts = ["jpg", "jpeg", "png", "gif", "webp", "svg", "ico", "bmp"];
+  const documentExts = [
+    "pdf",
+    "doc",
+    "docx",
+    "xls",
+    "xlsx",
+    "ppt",
+    "pptx",
+    "txt",
+    "csv",
+  ];
+  const codeExts = [
+    "js",
+    "ts",
+    "jsx",
+    "tsx",
+    "html",
+    "css",
+    "json",
+    "xml",
+    "yaml",
+    "yml",
+    "md",
+    "py",
+    "go",
+    "rs",
+    "java",
+  ];
+  const archiveExts = ["zip", "tar", "gz", "rar", "7z", "bz2"];
+
+  if (imageExts.includes(ext)) return "image";
+  if (documentExts.includes(ext)) return "document";
+  if (codeExts.includes(ext)) return "code";
+  if (archiveExts.includes(ext)) return "archive";
+
+  return "file";
 }
 
 // Get content type label
 export function getContentTypeLabel(contentType?: string): string {
-  if (!contentType) return 'Unknown';
-  
+  if (!contentType) return "Unknown";
+
   const labels: Record<string, string> = {
-    'application/json': 'JSON',
-    'application/xml': 'XML',
-    'application/pdf': 'PDF',
-    'application/zip': 'ZIP Archive',
-    'application/gzip': 'GZIP Archive',
-    'text/plain': 'Plain Text',
-    'text/html': 'HTML',
-    'text/css': 'CSS',
-    'text/javascript': 'JavaScript',
-    'image/jpeg': 'JPEG Image',
-    'image/png': 'PNG Image',
-    'image/gif': 'GIF Image',
-    'image/webp': 'WebP Image',
-    'image/svg+xml': 'SVG Image',
+    "application/json": "JSON",
+    "application/xml": "XML",
+    "application/pdf": "PDF",
+    "application/zip": "ZIP Archive",
+    "application/gzip": "GZIP Archive",
+    "text/plain": "Plain Text",
+    "text/html": "HTML",
+    "text/css": "CSS",
+    "text/javascript": "JavaScript",
+    "image/jpeg": "JPEG Image",
+    "image/png": "PNG Image",
+    "image/gif": "GIF Image",
+    "image/webp": "WebP Image",
+    "image/svg+xml": "SVG Image",
   };
-  
+
   return labels[contentType] || contentType;
 }

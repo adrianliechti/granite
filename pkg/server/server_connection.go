@@ -1,10 +1,43 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"os"
+	"time"
 )
+
+// Test an unsaved configuration without creating or changing a connection.
+func (s *Server) handleConnectionTest(w http.ResponseWriter, r *http.Request) {
+	var conn Connection
+	if err := json.NewDecoder(r.Body).Decode(&conn); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+	defer cancel()
+	var err error
+	if conn.SQL != nil {
+		query := "SELECT 1"
+		if conn.SQL.Driver == "oracle" {
+			query += " FROM DUAL"
+		}
+		_, err = executeSQL(ctx, conn.SQL, SQLRequest{Query: query}, true)
+	} else {
+		provider, providerErr := newStorageProviderFromConnection(ctx, &conn)
+		err = providerErr
+		if err == nil {
+			_, err = provider.ListContainers(ctx)
+		}
+	}
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Write([]byte(`{"ok":true}`))
+}
 
 // GET /connections - List all connections
 func (s *Server) handleConnectionList(w http.ResponseWriter, r *http.Request) {

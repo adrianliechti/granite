@@ -1,41 +1,32 @@
-import { useState, useMemo } from 'react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useState } from "react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
-  useReactTable,
-  getCoreRowModel,
-  getSortedRowModel,
-  flexRender,
-  type ColumnDef,
-  type SortingState,
-} from '@tanstack/react-table';
-import { 
-  File, 
-  Folder, 
-  Image, 
-  FileText, 
-  FileCode, 
-  Archive,
+  Folder,
+  File,
   ChevronRight,
   ArrowUp,
   Loader2,
   Upload,
   Trash2,
-  ChevronUp,
-  ChevronDown,
-  ChevronsUpDown
-} from 'lucide-react';
-import { 
-  listObjects, 
+  RefreshCw,
+  Search,
+  Plus,
+  Box,
+  ArrowDown,
+} from "lucide-react";
+import {
+  listContainers,
   deleteObjects,
   deletePrefix,
-  formatFileSize, 
-  getFileIconType, 
+  formatFileSize,
   getDisplayName,
-  getParentPath
-} from '../lib/adapters/storage';
-import { ObjectDetail } from './ObjectDetail';
-import { UploadModal } from './UploadModal';
-import type { Connection } from '../types';
+  getParentPath,
+} from "../lib/adapters/storage";
+import { useStorageListing } from "../lib/useStorageListing";
+import { ObjectDetail } from "./ObjectDetail";
+import { UploadModal } from "./UploadModal";
+import { CreateContainerModal } from "./CreateContainerModal";
+import type { Connection } from "../types";
 
 interface ObjectStorageViewProps {
   connection: Connection;
@@ -43,497 +34,471 @@ interface ObjectStorageViewProps {
   path: string;
   onNavigate: (container: string, path: string) => void;
 }
-
-const iconMap = {
-  folder: Folder,
-  image: Image,
-  document: FileText,
-  code: FileCode,
-  archive: Archive,
-  file: File,
-};
-
-export function ObjectStorageView({ connection, container, path, onNavigate }: ObjectStorageViewProps) {
-  const queryClient = useQueryClient();
-  const [selectedObject, setSelectedObject] = useState<string | null>(null);
-  const [showUploadModal, setShowUploadModal] = useState(false);
-  const [actionError, setActionError] = useState<string | null>(null);
-
-  // Normalize path: ensure it ends with '/' when non-empty (for folder prefix listing)
-  const normalizedPath = path && !path.endsWith('/') ? path + '/' : path;
-
-  // Fetch objects for current path
-  const { data: objects, isLoading, error } = useQuery({
-    queryKey: ['storage-objects', connection.id, container, normalizedPath],
-    queryFn: () => listObjects(connection.id, container, { prefix: normalizedPath, delimiter: '/' }),
-    enabled: !!connection && !!container,
-  });
-
-  // Delete mutation for files
-  const deleteFileMutation = useMutation({
-    mutationFn: (key: string) => deleteObjects(connection.id, container, [key]),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['storage-objects', connection.id, container] });
-      setSelectedObject(null);
-      setActionError(null);
-    },
-    onError: (err) => {
-      setActionError(err instanceof Error ? err.message : 'Failed to delete object');
-    },
-  });
-
-  // Delete mutation for folders (prefixes)
-  const deleteFolderMutation = useMutation({
-    mutationFn: (prefix: string) => deletePrefix(connection.id, container, prefix),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['storage-objects', connection.id, container] });
-      setActionError(null);
-    },
-    onError: (err) => {
-      setActionError(err instanceof Error ? err.message : 'Failed to delete folder');
-    },
-  });
-
-  const handleDeleteItem = (item: DisplayItem, e: React.MouseEvent) => {
-    e.stopPropagation();
-    const name = item.name.replace(/\/$/, '') || '/';
-    const message = item.isFolder
-      ? `Delete folder "${name}" and all its contents?`
-      : `Delete "${name}"?`;
-    
-    if (confirm(message)) {
-      if (item.isFolder) {
-        // For folders, we need to delete all objects with this prefix
-        // Special case: if prefix is just "/", it might be a folder marker object
-        const key = item.key;
-        if (key === '/' || key === '') {
-          // This is likely a folder marker object, delete it directly
-          deleteFileMutation.mutate(key || '/');
-        } else {
-          deleteFolderMutation.mutate(key);
-        }
-      } else {
-        deleteFileMutation.mutate(item.key);
-      }
-    }
-  };
-
-  const isDeleting = deleteFileMutation.isPending || deleteFolderMutation.isPending;
-
-  // Combine prefixes (folders) and objects for display
-  const items = useMemo(() => {
-    if (!objects) return [];
-
-    const folders: DisplayItem[] = objects.prefixes.map((prefix) => ({
-      key: prefix,
-      name: getDisplayName(prefix),
-      isFolder: true,
-      size: 0,
-      lastModified: '',
-    }));
-
-    const files: DisplayItem[] = objects.objects
-      .filter((obj) => !obj.isFolder) // Filter out folder markers
-      .map((obj) => ({
-        key: obj.key,
-        name: obj.name,
-        isFolder: false,
-        size: obj.size,
-        lastModified: obj.lastModified,
-        contentType: obj.contentType,
-      }));
-
-    return [...folders, ...files];
-  }, [objects]);
-
-  const handleItemClick = (item: DisplayItem) => {
-    if (item.isFolder) {
-      onNavigate(container, item.key);
-      setSelectedObject(null);
-    } else {
-      setSelectedObject(item.key);
-    }
-  };
-
-  const handleNavigateUp = () => {
-    const parentPath = getParentPath(path);
-    onNavigate(container, parentPath ? parentPath + '/' : '');
-    setSelectedObject(null);
-  };
-
-  // Build breadcrumb path segments
-  const pathSegments = useMemo(() => {
-    const segments: { label: string; path: string }[] = [
-      { label: container, path: '' }
-    ];
-    
-    if (path) {
-      const parts = path.split('/').filter(Boolean);
-      let currentPath = '';
-      for (const part of parts) {
-        currentPath += part + '/';
-        segments.push({ label: part, path: currentPath });
-      }
-    }
-    
-    return segments;
-  }, [container, path]);
-
-  const providerLabel = connection.amazonS3 ? 'S3' : 'Azure Blob';
-
-  return (
-    <div className="flex-1 flex gap-2 min-h-0">
-      {/* Objects List/Grid */}
-      <div className="flex-1 bg-white dark:bg-[#1a1a1a]/60 border border-neutral-200 dark:border-white/8 rounded-xl overflow-hidden flex flex-col min-w-0">
-        {/* Header */}
-        <div className="px-4 py-3 border-b border-neutral-200 dark:border-white/8">
-          <div className="flex items-center justify-between">
-            {/* Breadcrumb */}
-            <div className="flex items-center gap-1 text-sm overflow-x-auto">
-              <span className="text-neutral-400 dark:text-neutral-500 shrink-0">{providerLabel}:</span>
-              {pathSegments.map((segment, i) => (
-                <span key={segment.path} className="flex items-center shrink-0">
-                  {i > 0 && <ChevronRight className="w-4 h-4 text-neutral-400 mx-1" />}
-                  <button
-                    onClick={() => onNavigate(container, segment.path)}
-                    className={`hover:text-blue-500 transition-colors ${
-                      i === pathSegments.length - 1
-                        ? 'text-neutral-700 dark:text-neutral-200 font-medium'
-                        : 'text-neutral-500 dark:text-neutral-400'
-                    }`}
-                  >
-                    {segment.label}
-                  </button>
-                </span>
-              ))}
-            </div>
-
-            {/* Upload Button */}
-            <div className="ml-4 shrink-0">
-              <button
-                onClick={() => setShowUploadModal(true)}
-                className="px-3 py-1.5 rounded-lg bg-blue-500 hover:bg-blue-600 text-white text-xs font-medium flex items-center gap-2 transition-colors"
-                title="Upload file"
-              >
-                <Upload className="w-3.5 h-3.5" />
-                Upload
-              </button>
-            </div>
-          </div>
-        </div>
-
-        {/* Action Error */}
-        {actionError && (
-          <div className="px-4 py-2 border-b border-neutral-200 dark:border-white/8 flex items-center justify-between gap-2">
-            <span className="text-xs text-red-500 dark:text-red-400 break-all">{actionError}</span>
-            <button
-              onClick={() => setActionError(null)}
-              className="text-xs text-neutral-400 hover:text-neutral-600 dark:hover:text-neutral-300 shrink-0"
-            >
-              Dismiss
-            </button>
-          </div>
-        )}
-
-        {/* Content */}
-        <div className="flex-1 overflow-auto" onClick={() => setSelectedObject(null)}>
-          {isLoading ? (
-            <div className="flex items-center justify-center h-full">
-              <Loader2 className="w-6 h-6 text-neutral-400 animate-spin" />
-            </div>
-          ) : error ? (
-            <div className="flex items-center justify-center h-full text-red-500 text-sm">
-              Failed to load objects
-            </div>
-          ) : items.length === 0 ? (
-            <div className="flex items-center justify-center h-full text-neutral-400 dark:text-neutral-600 text-sm">
-              This folder is empty
-            </div>
-          ) : (
-            <ObjectListView
-              items={items}
-              selectedKey={selectedObject}
-              path={path}
-              onItemClick={handleItemClick}
-              onNavigateUp={handleNavigateUp}
-              onDeleteItem={handleDeleteItem}
-              isDeleting={isDeleting}
-            />
-          )}
-        </div>
-
-        {/* Footer */}
-        <div className="px-4 py-2 border-t border-neutral-200 dark:border-white/8 text-xs text-neutral-400 dark:text-neutral-500">
-          {items.length} {items.length === 1 ? 'item' : 'items'}
-          {objects?.isTruncated && ' (truncated)'}
-        </div>
-      </div>
-
-      {/* Object Detail Panel - only show when a file is selected */}
-      {selectedObject && (
-        <div className="w-80 shrink-0">
-          <ObjectDetail
-            connection={connection}
-            container={container}
-            objectKey={selectedObject}
-            onClose={() => setSelectedObject(null)}
-          />
-        </div>
-      )}
-
-      {/* Upload Modal */}
-      {showUploadModal && (
-        <UploadModal
-          connection={connection}
-          container={container}
-          currentPath={normalizedPath}
-          onClose={() => setShowUploadModal(false)}
-        />
-      )}
-    </div>
-  );
-}
-
-// Types
-interface DisplayItem {
+interface Item {
   key: string;
   name: string;
   isFolder: boolean;
   size: number;
   lastModified: string;
-  contentType?: string;
 }
-
-// List View
-interface ObjectListViewProps {
-  items: DisplayItem[];
-  selectedKey: string | null;
-  path: string;
-  onItemClick: (item: DisplayItem) => void;
-  onNavigateUp: () => void;
-  onDeleteItem: (item: DisplayItem, e: React.MouseEvent) => void;
-  isDeleting: boolean;
-}
-
-function ObjectListView({ items, selectedKey, path, onItemClick, onNavigateUp, onDeleteItem, isDeleting }: ObjectListViewProps) {
-  const [sorting, setSorting] = useState<SortingState>([]);
-
-  const columns = useMemo<ColumnDef<DisplayItem>[]>(
-    () => [
-      {
-        accessorKey: 'name',
-        header: ({ column }) => {
-          return (
-            <button
-              className="flex items-center gap-1 hover:text-neutral-700 dark:hover:text-neutral-200 transition-colors"
-              onClick={() => column.toggleSorting(column.getIsSorted() === 'asc')}
-            >
-              Name
-              {column.getIsSorted() === 'asc' ? (
-                <ChevronUp className="w-3.5 h-3.5" />
-              ) : column.getIsSorted() === 'desc' ? (
-                <ChevronDown className="w-3.5 h-3.5" />
-              ) : (
-                <ChevronsUpDown className="w-3.5 h-3.5 opacity-50" />
-              )}
-            </button>
-          );
-        },
-        cell: ({ row }) => {
-          const item = row.original;
-          const iconType = item.isFolder ? 'folder' : getFileIconType(item.key);
-          const Icon = iconMap[iconType];
-          const isSelected = selectedKey === item.key;
-
-          return (
-            <div className="flex items-center gap-2">
-              <Icon className={`w-4 h-4 ${item.isFolder ? 'text-yellow-500' : 'text-neutral-400'}`} />
-              <span className={`truncate ${isSelected ? 'text-blue-600 dark:text-blue-400' : 'text-neutral-700 dark:text-neutral-200'}`}>
-                {item.name}
-              </span>
-            </div>
-          );
-        },
-      },
-      {
-        accessorKey: 'size',
-        header: ({ column }) => {
-          return (
-            <button
-              className="flex items-center gap-1 hover:text-neutral-700 dark:hover:text-neutral-200 transition-colors ml-auto"
-              onClick={() => column.toggleSorting(column.getIsSorted() === 'asc')}
-            >
-              Size
-              {column.getIsSorted() === 'asc' ? (
-                <ChevronUp className="w-3.5 h-3.5" />
-              ) : column.getIsSorted() === 'desc' ? (
-                <ChevronDown className="w-3.5 h-3.5" />
-              ) : (
-                <ChevronsUpDown className="w-3.5 h-3.5 opacity-50" />
-              )}
-            </button>
-          );
-        },
-        cell: ({ row }) => {
-          const item = row.original;
-          return (
-            <div className="text-right text-neutral-500 dark:text-neutral-400">
-              {item.isFolder ? '-' : formatFileSize(item.size)}
-            </div>
-          );
-        },
-        size: 100,
-      },
-      {
-        accessorKey: 'lastModified',
-        header: ({ column }) => {
-          return (
-            <button
-              className="flex items-center gap-1 hover:text-neutral-700 dark:hover:text-neutral-200 transition-colors ml-auto"
-              onClick={() => column.toggleSorting(column.getIsSorted() === 'asc')}
-            >
-              Modified
-              {column.getIsSorted() === 'asc' ? (
-                <ChevronUp className="w-3.5 h-3.5" />
-              ) : column.getIsSorted() === 'desc' ? (
-                <ChevronDown className="w-3.5 h-3.5" />
-              ) : (
-                <ChevronsUpDown className="w-3.5 h-3.5 opacity-50" />
-              )}
-            </button>
-          );
-        },
-        cell: ({ row }) => {
-          const item = row.original;
-          return (
-            <div className="text-right text-neutral-500 dark:text-neutral-400">
-              {item.lastModified ? formatDate(item.lastModified) : '-'}
-            </div>
-          );
-        },
-        size: 160,
-      },
-      {
-        id: 'actions',
-        header: '',
-        cell: ({ row }) => {
-          const item = row.original;
-          return (
-            <button
-              onClick={(e) => onDeleteItem(item, e)}
-              disabled={isDeleting}
-              className="p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-red-100 dark:hover:bg-red-500/10 transition-all disabled:opacity-50"
-              title="Delete"
-            >
-              <Trash2 className="w-3.5 h-3.5 text-red-500" />
-            </button>
-          );
-        },
-        size: 40,
-      },
-    ],
-    [selectedKey, onDeleteItem, isDeleting]
+export function ObjectStorageView({
+  connection,
+  container,
+  path,
+  onNavigate,
+}: ObjectStorageViewProps) {
+  const queryClient = useQueryClient();
+  const [selected, setSelected] = useState<string | null>(null),
+    [upload, setUpload] = useState(false),
+    [deleting, setDeleting] = useState<Item | null>(null);
+  const [draft, setDraft] = useState(""),
+    [search, setSearch] = useState(""),
+    [recursive, setRecursive] = useState(false),
+    [kind, setKind] = useState("all");
+  const [sort, setSort] = useState<{
+    column: "name" | "size" | "lastModified";
+    desc: boolean;
+  }>({ column: "name", desc: false });
+  const prefix = path && !path.endsWith("/") ? `${path}/` : path;
+  const listing = useStorageListing(
+    connection.id,
+    container,
+    prefix + search,
+    recursive,
   );
-
-  const table = useReactTable({
-    data: items,
-    columns,
-    state: { sorting },
-    onSortingChange: setSorting,
-    getCoreRowModel: getCoreRowModel(),
-    getSortedRowModel: getSortedRowModel(),
+  const items: Item[] = [
+    ...new Set(listing.data?.pages.flatMap((p) => p.prefixes) ?? []),
+  ].map((key) => ({
+    key,
+    name: getDisplayName(key),
+    isFolder: true,
+    size: 0,
+    lastModified: "",
+  }));
+  const objects = new Map(
+    listing.data?.pages
+      .flatMap((p) => p.objects)
+      .filter((o) => !o.isFolder)
+      .map((o) => [o.key, o]),
+  );
+  items.push(
+    ...[...objects.values()].map((object) => ({
+      ...object,
+      name: recursive ? object.key.slice(prefix.length) : object.name,
+    })),
+  );
+  const visible = items
+    .filter(
+      (item) =>
+        kind === "all" || (kind === "folders" ? item.isFolder : !item.isFolder),
+    )
+    .sort((a, b) => {
+      if (a.isFolder !== b.isFolder) return a.isFolder ? -1 : 1;
+      const order =
+        sort.column === "size"
+          ? a.size - b.size
+          : a[sort.column].localeCompare(b[sort.column], undefined, {
+              numeric: true,
+            });
+      return sort.desc ? -order : order;
+    });
+  const remove = useMutation({
+    mutationFn: (item: Item) =>
+      item.isFolder
+        ? deletePrefix(connection.id, container, item.key)
+        : deleteObjects(connection.id, container, [item.key]),
+    onSuccess: () => {
+      setDeleting(null);
+      setSelected(null);
+      void queryClient.invalidateQueries({
+        predicate: (q) =>
+          ["storage-objects", "storage-tree"].includes(String(q.queryKey[0])) &&
+          q.queryKey[1] === connection.id &&
+          q.queryKey[2] === container,
+      });
+    },
   });
-
+  const navigate = (next: string) => {
+    setSelected(null);
+    setDeleting(null);
+    onNavigate(container, next);
+  };
   return (
-    <table className="w-full text-sm">
-      <thead className="sticky top-0 bg-neutral-50 dark:bg-[#1a1a1a] z-10">
-        {table.getHeaderGroups().map((headerGroup) => (
-          <tr key={headerGroup.id} className="border-b border-neutral-200 dark:border-white/8">
-            {headerGroup.headers.map((header) => (
-              <th
-                key={header.id}
-                className="px-4 py-2 text-left font-medium text-neutral-500 dark:text-neutral-400"
-                style={{ width: header.getSize() }}
-              >
-                {header.isPlaceholder
-                  ? null
-                  : flexRender(header.column.columnDef.header, header.getContext())}
-              </th>
+    <main className="workspace flex-1 min-w-0 flex flex-col gap-2">
+      <header className="workspace-header">
+        <nav className="breadcrumbs" aria-label="Breadcrumb">
+          <span>{connection.name}</span>
+          <ChevronRight size={12} />
+          <button onClick={() => navigate("")}>{container}</button>
+          {prefix
+            .split("/")
+            .filter(Boolean)
+            .map((part, index, parts) => (
+              <span className="flex items-center gap-2 min-w-0" key={index}>
+                <ChevronRight size={12} />
+                <button
+                  onClick={() =>
+                    navigate(parts.slice(0, index + 1).join("/") + "/")
+                  }
+                >
+                  {part}
+                </button>
+              </span>
             ))}
-          </tr>
-        ))}
-      </thead>
-      <tbody>
-        {/* Parent directory row */}
-        {path && (
-          <tr
-            className="hover:bg-neutral-50 dark:hover:bg-white/5 cursor-pointer border-b border-neutral-100 dark:border-white/5"
-            onClick={(e) => {
-              e.stopPropagation();
-              onNavigateUp();
-            }}
+        </nav>
+      </header>
+      <div className="panel flex flex-col flex-1 min-h-0">
+        <form
+          className="toolbar flex-wrap"
+          onSubmit={(e) => {
+            e.preventDefault();
+            setSearch(draft);
+            setSelected(null);
+          }}
+        >
+          <button
+            className="icon-button"
+            type="button"
+            aria-label="Parent folder"
+            disabled={!prefix}
+            onClick={() => navigate(getParentPath(prefix))}
           >
-            <td className="px-4 py-2" colSpan={4}>
-              <div className="flex items-center gap-2">
-                <ArrowUp className="w-4 h-4 text-neutral-400" />
-                <span className="text-neutral-500 dark:text-neutral-400">..</span>
-              </div>
-            </td>
-          </tr>
-        )}
-        {/* Object rows */}
-        {table.getRowModel().rows.map((row) => {
-          const isSelected = selectedKey === row.original.key;
-          return (
-            <tr
-              key={row.id}
-              className={`group cursor-pointer border-b border-neutral-100 dark:border-white/5 ${
-                isSelected ? 'bg-blue-50 dark:bg-blue-500/10' : 'hover:bg-neutral-50 dark:hover:bg-white/5'
-              }`}
-              onClick={(e) => {
-                e.stopPropagation();
-                onItemClick(row.original);
+            <ArrowUp size={15} />
+          </button>
+          <label className="search-field">
+            <Search size={14} />
+            <input
+              aria-label="Object name prefix"
+              placeholder="Search by name prefix…"
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+            />
+          </label>
+          {draft !== search && <button className="text-button">Apply</button>}
+          {search && (
+            <button
+              type="button"
+              className="text-button"
+              onClick={() => {
+                setDraft("");
+                setSearch("");
               }}
             >
-              {row.getVisibleCells().map((cell) => (
-                <td key={cell.id} className="px-4 py-2">
-                  {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                </td>
-              ))}
-            </tr>
-          );
-        })}
-      </tbody>
-    </table>
+              Clear
+            </button>
+          )}
+          <label className="inline-check">
+            <input
+              type="checkbox"
+              checked={recursive}
+              onChange={(e) => setRecursive(e.target.checked)}
+            />
+            Subfolders
+          </label>
+          <select
+            className="inline-select"
+            aria-label="Object type"
+            value={kind}
+            onChange={(e) => setKind(e.target.value)}
+          >
+            <option value="all">All items</option>
+            <option value="files">Files</option>
+            <option value="folders">Folders</option>
+          </select>
+          <button
+            className="icon-button ml-auto"
+            type="button"
+            aria-label="Refresh objects"
+            disabled={listing.isFetching}
+            onClick={() => void listing.refetch()}
+          >
+            <RefreshCw
+              size={14}
+              className={listing.isFetching ? "animate-spin" : ""}
+            />
+          </button>
+          <button
+            className="text-button"
+            type="button"
+            onClick={() => setUpload(true)}
+          >
+            <Upload size={14} />
+            Upload
+          </button>
+        </form>
+        {deleting && (
+          <div className="inline-confirm">
+            <span>
+              Delete <strong>{deleting.name}</strong>
+              {deleting.isFolder ? " and everything inside this folder" : ""}?
+            </span>
+            <button
+              className="text-button danger"
+              disabled={remove.isPending}
+              onClick={() => remove.mutate(deleting)}
+            >
+              {remove.isPending ? "Deleting…" : "Delete"}
+            </button>
+            <button
+              className="text-button"
+              disabled={remove.isPending}
+              onClick={() => {
+                setDeleting(null);
+                remove.reset();
+              }}
+            >
+              Cancel
+            </button>
+            {remove.error && (
+              <p className="danger" role="alert">
+                {remove.error.message}
+              </p>
+            )}
+          </div>
+        )}
+        {listing.error && (
+          <p className="error-banner" role="alert">
+            {listing.error.message}
+          </p>
+        )}
+        <div className="flex flex-1 min-h-0 relative">
+          <div className="overflow-auto flex-1 min-w-0">
+            <table className="storage-grid">
+              <thead>
+                <tr>
+                  {(["name", "size", "lastModified"] as const).map((column) => (
+                    <th
+                      key={column}
+                      aria-sort={
+                        sort.column === column
+                          ? sort.desc
+                            ? "descending"
+                            : "ascending"
+                          : "none"
+                      }
+                    >
+                      <button
+                        className="column-title"
+                        onClick={() =>
+                          setSort({
+                            column,
+                            desc: sort.column === column && !sort.desc,
+                          })
+                        }
+                      >
+                        {column === "lastModified"
+                          ? "Modified"
+                          : column === "name"
+                            ? "Name"
+                            : "Size"}
+                        {sort.column === column &&
+                          (sort.desc ? (
+                            <ArrowDown size={12} />
+                          ) : (
+                            <ArrowUp size={12} />
+                          ))}
+                      </button>
+                    </th>
+                  ))}
+                  <th>
+                    <span className="sr-only">Actions</span>
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {visible.map((item) => (
+                  <tr
+                    key={item.key}
+                    className={selected === item.key ? "active" : ""}
+                  >
+                    <td>
+                      <button
+                        className="object-name"
+                        title={item.key}
+                        onClick={() =>
+                          item.isFolder
+                            ? navigate(item.key)
+                            : setSelected(item.key)
+                        }
+                      >
+                        {item.isFolder ? (
+                          <Folder size={15} />
+                        ) : (
+                          <File size={15} />
+                        )}
+                        <span className="truncate">{item.name}</span>
+                      </button>
+                    </td>
+                    <td className="muted tabular-nums">
+                      {item.isFolder ? "—" : formatFileSize(item.size)}
+                    </td>
+                    <td className="muted whitespace-nowrap">
+                      {item.lastModified
+                        ? new Date(item.lastModified).toLocaleDateString()
+                        : "—"}
+                    </td>
+                    <td>
+                      <button
+                        className="icon-button quiet"
+                        aria-label={`Delete ${item.name}`}
+                        disabled={remove.isPending}
+                        onClick={() => {
+                          setDeleting(item);
+                          remove.reset();
+                        }}
+                      >
+                        <Trash2 size={13} />
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {!visible.length && (
+              <div className="empty-state">
+                {listing.isPending ? (
+                  <>
+                    <Loader2 size={18} className="animate-spin" />
+                    Loading objects…
+                  </>
+                ) : search || kind !== "all" ? (
+                  "No matching items loaded."
+                ) : (
+                  "This folder is empty. Upload a file to get started."
+                )}
+              </div>
+            )}
+          </div>
+          {selected && (
+            <ObjectDetail
+              key={selected}
+              connection={connection}
+              container={container}
+              objectKey={selected}
+              onClose={() => setSelected(null)}
+            />
+          )}
+        </div>
+        <div className="results-footer">
+          <span className="muted">
+            {visible.length} of {items.length} loaded
+          </span>
+          {listing.hasNextPage ? (
+            <button
+              className="text-button"
+              onClick={() => void listing.fetchNextPage()}
+              disabled={listing.isFetchingNextPage}
+            >
+              {listing.isFetchingNextPage ? "Loading…" : "Load more"}
+            </button>
+          ) : (
+            !listing.isPending && (
+              <span className="muted">All items loaded</span>
+            )
+          )}
+          <span className="muted text-xs ml-auto">
+            Sort and type filter use loaded items
+          </span>
+        </div>
+      </div>
+      {upload && (
+        <UploadModal
+          connection={connection}
+          container={container}
+          currentPath={prefix}
+          onClose={() => setUpload(false)}
+        />
+      )}
+    </main>
   );
 }
-
-function formatDate(dateStr: string): string {
-  try {
-    const date = new Date(dateStr);
-    return date.toLocaleDateString(undefined, {
-      month: 'short',
-      day: 'numeric',
-      year: 'numeric',
-    });
-  } catch {
-    return dateStr;
-  }
-}
-
-// Empty state component for when no container is selected
-export function ObjectStorageEmpty() {
+export function StorageLanding({
+  connection,
+  onNavigate,
+}: {
+  connection: Connection;
+  onNavigate: (container: string, path: string) => void;
+}) {
+  const containers = useQuery({
+    queryKey: ["storage-containers", connection.id],
+    queryFn: () => listContainers(connection.id),
+  });
+  const [create, setCreate] = useState(false),
+    [search, setSearch] = useState("");
+  const names =
+    containers.data?.filter((c) =>
+      c.name.toLowerCase().includes(search.toLowerCase()),
+    ) ?? [];
   return (
-    <div className="flex-1 bg-white dark:bg-[#1a1a1a]/60 border border-neutral-200 dark:border-white/8 rounded-xl flex items-center justify-center">
-      <div className="text-center">
-        <Folder className="w-16 h-16 text-neutral-300 dark:text-neutral-700 mx-auto mb-4" />
-        <h3 className="text-lg font-medium text-neutral-600 dark:text-neutral-400 mb-2">
-          No container selected
-        </h3>
-        <p className="text-sm text-neutral-400 dark:text-neutral-600">
-          Select a container from the sidebar to browse objects
+    <main className="workspace flex-1 min-w-0 flex flex-col gap-2">
+      <header className="workspace-header">
+        {connection.name}
+        <span className="muted ml-auto text-xs">
+          {connection.amazonS3 ? "S3" : "Azure Blob"}
+        </span>
+      </header>
+      <section className="panel flex-1 min-h-0 overflow-auto p-6">
+        <h1 className="font-medium text-base mb-2">
+          {connection.amazonS3 ? "Buckets" : "Containers"}
+        </h1>
+        <p className="muted mb-5">
+          Choose a container to browse, upload, or manage objects.
         </p>
-      </div>
-    </div>
+        <div className="flex items-center gap-3 mb-4">
+          <label className="search-field">
+            <Search size={14} />
+            <input
+              aria-label="Find container"
+              placeholder="Find a container…"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+            />
+          </label>
+          <button className="text-button" onClick={() => setCreate(true)}>
+            <Plus size={14} />
+            New {connection.amazonS3 ? "bucket" : "container"}
+          </button>
+          <button
+            className="icon-button"
+            aria-label="Refresh containers"
+            onClick={() => void containers.refetch()}
+          >
+            <RefreshCw size={14} />
+          </button>
+        </div>
+        {containers.error && (
+          <p className="error-banner" role="alert">
+            {containers.error.message}
+          </p>
+        )}
+        <div className="landing-list">
+          {names.map((container) => (
+            <button
+              key={container.name}
+              onClick={() => onNavigate(container.name, "")}
+            >
+              <Box size={15} />
+              <span className="truncate">{container.name}</span>
+              <ChevronRight size={12} className="ml-auto" />
+            </button>
+          ))}
+        </div>
+        {!names.length && (
+          <p className="muted">
+            {containers.isPending
+              ? "Loading containers…"
+              : search
+                ? "No matching containers."
+                : "No containers yet."}
+          </p>
+        )}
+      </section>
+      {create && (
+        <CreateContainerModal
+          connection={connection}
+          onClose={() => setCreate(false)}
+        />
+      )}
+    </main>
   );
 }
