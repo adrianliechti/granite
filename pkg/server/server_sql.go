@@ -3,7 +3,9 @@ package server
 import (
 	"context"
 	"database/sql"
+	"database/sql/driver"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -57,6 +59,10 @@ func (s *Server) handleSQL(w http.ResponseWriter, r *http.Request, query bool) {
 
 	resp, err := executeSQL(r.Context(), conn.SQL, req, query)
 	if err != nil {
+		if errors.Is(err, errQueryTimeout) {
+			writeError(w, http.StatusGatewayTimeout, "Query timed out")
+			return
+		}
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -92,7 +98,7 @@ func executeSQL(ctx context.Context, config *SQLConfig, req SQLRequest, query bo
 		}
 	}
 
-	db, err := openDatabase(config, req.Database)
+	db, err := openDatabase(config, req.Database, req.Schema)
 	if err != nil {
 		return nil, err
 	}
@@ -106,24 +112,62 @@ type sqlExecutor interface {
 	ExecContext(context.Context, string, ...any) (sql.Result, error)
 }
 
+// errQueryTimeout marks a query stopped by the request's own timeout, as opposed
+// to deadlines inside a driver, such as a connect timeout to an unreachable host.
+var errQueryTimeout = errors.New("query timed out")
+
+// withQueryTimeout bounds ctx by a request timeout in milliseconds; 0 means none.
+func withQueryTimeout(ctx context.Context, timeoutMS int) (context.Context, context.CancelFunc, error) {
+	if timeoutMS < 0 || timeoutMS > 300_000 {
+		return nil, nil, fmt.Errorf("query timeout must be between 0 and 300000 milliseconds")
+	}
+	if timeoutMS == 0 {
+		return ctx, func() {}, nil
+	}
+	ctx, cancel := context.WithTimeoutCause(ctx, time.Duration(timeoutMS)*time.Millisecond, errQueryTimeout)
+	return ctx, cancel, nil
+}
+
+// queryError reports why a statement failed: errQueryTimeout when the request's
+// timeout stopped it, the context's error when the request was otherwise
+// canceled, and the driver's error in every other case.
+func queryError(ctx context.Context, err error) error {
+	if ctx.Err() == nil {
+		return err
+	}
+	if errors.Is(context.Cause(ctx), errQueryTimeout) {
+		return errQueryTimeout
+	}
+	return ctx.Err()
+}
+
 func executeOnConnection(ctx context.Context, db sqlExecutor, req SQLRequest, query bool) (*SQLResponse, error) {
+	ctx, cancel, err := withQueryTimeout(ctx, req.TimeoutMS)
+	if err != nil {
+		return nil, err
+	}
+	defer cancel()
+	return executeStatement(ctx, db, req, query)
+}
+
+func executeStatement(ctx context.Context, db sqlExecutor, req SQLRequest, query bool) (*SQLResponse, error) {
 	if query {
 		rows, err := db.QueryContext(ctx, req.Query, req.Params...)
 		if err != nil {
-			return nil, err
+			return nil, queryError(ctx, err)
 		}
 		defer rows.Close()
 
 		columns, data, truncated, err := rowsToJSON(rows, req.MaxRows)
 		if err != nil {
-			return nil, err
+			return nil, queryError(ctx, err)
 		}
 		return &SQLResponse{Columns: columns, Rows: data, Truncated: truncated}, nil
 	}
 
 	result, err := db.ExecContext(ctx, req.Query, req.Params...)
 	if err != nil {
-		return nil, err
+		return nil, queryError(ctx, err)
 	}
 
 	rowsAffected, _ := result.RowsAffected()
@@ -186,16 +230,14 @@ func typedParameter(driver string, param map[string]any) (any, error) {
 	}
 }
 
-// Use the drivers' parsers so database selection preserves credentials and
-// connection options in URL, keyword, socket, ADO, and ODBC connection strings.
-func openDatabase(config *SQLConfig, database string) (*sql.DB, error) {
-	// Keep "oracle" as Granite's connection type; Oracle registers "oracledb".
-	if config.Driver == "oracle" {
-		return sql.Open("oracledb", config.DSN)
-	}
-
-	if database == "" {
-		return sql.Open(config.Driver, config.DSN)
+// openDatabase opens a pool scoped to a request's database and schema. The
+// database is the driver's first level above schemas (a catalog in Trino). Empty
+// values keep the connection's own defaults, so nothing overrides what the DSN,
+// the role, or the server configured. The drivers' own parsers keep credentials
+// and options intact in URL, keyword, socket, ADO, and ODBC connection strings.
+func openDatabase(config *SQLConfig, database, schema string) (*sql.DB, error) {
+	if strings.ContainsRune(schema, '\x00') {
+		return nil, fmt.Errorf("invalid schema name")
 	}
 
 	switch config.Driver {
@@ -204,14 +246,80 @@ func openDatabase(config *SQLConfig, database string) (*sql.DB, error) {
 		if err != nil {
 			return nil, err
 		}
-		cfg.Database = database
+		if database != "" {
+			cfg.Database = database
+		}
 		connector, err := pq.NewConnectorConfig(cfg)
 		if err != nil {
 			return nil, err
 		}
-		return sql.OpenDB(connector), nil
+		if schema == "" {
+			return sql.OpenDB(connector), nil
+		}
+		// Put the schema first and keep the rest of the connection's search path,
+		// so extensions and types installed in public (or wherever the role's
+		// path points) still resolve. A session setting rather than a startup
+		// parameter works behind PgBouncer too.
+		return sql.OpenDB(sessionConnector{connector, func(ctx context.Context, conn driver.Conn) error {
+			return execSession(ctx, conn, `SELECT set_config('search_path', CASE current_setting('search_path') WHEN '' THEN $1 ELSE $1 || ', ' || current_setting('search_path') END, false)`,
+				pq.QuoteIdentifier(schema))
+		}}), nil
 
+	case "oracle":
+		// Keep "oracle" as Granite's connection type; Oracle registers "oracledb".
+		// An Oracle connection reaches a single database (the service's PDB).
+		if schema == "" {
+			return sql.Open("oracledb", config.DSN)
+		}
+		if strings.ContainsRune(schema, '"') {
+			return nil, fmt.Errorf("invalid schema name")
+		}
+		connector, err := connectorFor("oracledb", config.DSN)
+		if err != nil {
+			return nil, err
+		}
+		return sql.OpenDB(sessionConnector{connector, func(ctx context.Context, conn driver.Conn) error {
+			return execSession(ctx, conn, `ALTER SESSION SET CURRENT_SCHEMA = "`+schema+`"`)
+		}}), nil
+
+	case "trino":
+		u, err := url.Parse(config.DSN)
+		if err != nil {
+			return nil, err
+		}
+		params, err := url.ParseQuery(u.RawQuery)
+		if err != nil {
+			return nil, err
+		}
+		catalog := database
+		// Links and favorites from before catalogs and schemas were separate
+		// levels name both in the database, as "catalog.schema".
+		if schema == "" {
+			if before, after, ok := strings.Cut(database, "."); ok {
+				catalog, schema = before, after
+			}
+		}
+		if catalog != "" {
+			params.Set("catalog", catalog)
+		}
+		if schema != "" {
+			params.Set("schema", schema)
+		}
+		u.RawQuery = params.Encode()
+		return sql.Open(config.Driver, u.String())
+	}
+
+	// SQL Server cannot change a session's default schema, and MySQL and SQLite
+	// have no schema level below the database: their tables are qualified instead.
+	if schema != "" {
+		return nil, fmt.Errorf("schema selection is not supported for %s", config.Driver)
+	}
+
+	switch config.Driver {
 	case "mysql":
+		if database == "" {
+			return sql.Open(config.Driver, config.DSN)
+		}
 		cfg, err := mysql.ParseDSN(config.DSN)
 		if err != nil {
 			return nil, err
@@ -224,6 +332,9 @@ func openDatabase(config *SQLConfig, database string) (*sql.DB, error) {
 		return sql.OpenDB(connector), nil
 
 	case "sqlserver":
+		if database == "" {
+			return sql.Open(config.Driver, config.DSN)
+		}
 		cfg, err := msdsn.Parse(config.DSN)
 		if err != nil {
 			return nil, err
@@ -231,26 +342,76 @@ func openDatabase(config *SQLConfig, database string) (*sql.DB, error) {
 		cfg.Database = database
 		return sql.OpenDB(mssql.NewConnectorConfig(cfg)), nil
 
-	case "trino":
-		u, err := url.Parse(config.DSN)
-		if err != nil {
-			return nil, err
-		}
-		params, err := url.ParseQuery(u.RawQuery)
-		if err != nil {
-			return nil, err
-		}
-		if catalog, schema, ok := strings.Cut(database, "."); ok {
-			params.Set("catalog", catalog)
-			params.Set("schema", schema)
-		} else {
-			params.Set("schema", database)
-		}
-		u.RawQuery = params.Encode()
-		return sql.Open(config.Driver, u.String())
-
 	default:
 		// SQLite files are selected by the saved DSN.
 		return sql.Open(config.Driver, config.DSN)
 	}
 }
+
+// sessionConnector runs setup on every new connection, so a session setting
+// such as the schema holds for each statement, including batches that share
+// one connection. Every request opens its own pool, so settings never leak
+// into other requests.
+type sessionConnector struct {
+	driver.Connector
+	setup func(context.Context, driver.Conn) error
+}
+
+func (c sessionConnector) Connect(ctx context.Context) (driver.Conn, error) {
+	conn, err := c.Connector.Connect(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if err := c.setup(ctx, conn); err != nil {
+		conn.Close()
+		return nil, err
+	}
+	return conn, nil
+}
+
+// execSession runs a setup statement on a raw driver connection.
+func execSession(ctx context.Context, conn driver.Conn, query string, args ...any) error {
+	values := make([]driver.NamedValue, len(args))
+	for i, arg := range args {
+		values[i] = driver.NamedValue{Ordinal: i + 1, Value: arg}
+	}
+	if execer, ok := conn.(driver.ExecerContext); ok {
+		_, err := execer.ExecContext(ctx, query, values)
+		if !errors.Is(err, driver.ErrSkip) {
+			return err
+		}
+	}
+	stmt, err := conn.Prepare(query)
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+	execer, ok := stmt.(driver.StmtExecContext)
+	if !ok {
+		return fmt.Errorf("driver cannot run session setup")
+	}
+	_, err = execer.ExecContext(ctx, values)
+	return err
+}
+
+// connectorFor returns the connector of a driver registered with database/sql.
+func connectorFor(name, dsn string) (driver.Connector, error) {
+	db, err := sql.Open(name, dsn)
+	if err != nil {
+		return nil, err
+	}
+	drv := db.Driver()
+	db.Close()
+	if opener, ok := drv.(driver.DriverContext); ok {
+		return opener.OpenConnector(dsn)
+	}
+	return dsnConnector{dsn, drv}, nil
+}
+
+type dsnConnector struct {
+	dsn    string
+	driver driver.Driver
+}
+
+func (c dsnConnector) Connect(context.Context) (driver.Conn, error) { return c.driver.Open(c.dsn) }
+func (c dsnConnector) Driver() driver.Driver                        { return c.driver }

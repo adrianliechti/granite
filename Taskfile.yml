@@ -3,49 +3,71 @@
 version: '3'
 
 tasks:
-  start:
-    cmds:
-      - npm run build
-      - go run ./cmd/granite
-
-  client:
-    cmds:
-      - npm run dev
-
-  install:
-    cmds:
-      - cmd: go install ./cmd/granite
-      - task: install-darwin
-      - task: install-windows
-
-  install-darwin:
-    platforms: [darwin]
-    cmds:
-      - task: build
-      - cmd: mkdir -p ~/Applications
-      - cmd: rm -rf ~/Applications/Granite.app
-      - cmd: mv app/build/bin/Granite.app ~/Applications/
-
-  install-windows:
-    platforms: [windows]
-    cmds:
-      # Task runs cmds through its built-in POSIX shell (mvdan/sh) even on
-      # Windows, so env vars expand as $VAR, not %VAR%.
-      - task: build
-      - cmd: mkdir -p "$LOCALAPPDATA/Programs"
-      - cmd: rm -f "$LOCALAPPDATA/Programs/Granite.exe"
-      - cmd: mv app/build/bin/Granite.exe "$LOCALAPPDATA/Programs/"
-
-  build:
-    desc: Build the desktop app for this platform (Granite.app / Granite.exe); all resources are generated from app/appicon.png
-    cmds:
-      - go tool appbundle -name Granite -id com.adrianliechti.granite -description "Granite - Database and Object-Storage Browser" -company "Adrian Liechti" -copyright "© Adrian Liechti" -package ./app
-
-  ui:
+  build:ui:
     desc: Build the web UI assets
+    run: once
     cmds:
       - npm install
       - npm run build
+
+  build:app:
+    desc: Build the desktop app for this platform (Granite.app / Granite.exe); all resources are generated from app/appicon.png
+    deps: [build:ui]
+    cmds:
+      - go tool appbundle -name Granite -id com.adrianliechti.granite -description "Granite - Database and Object-Storage Browser" -company "Adrian Liechti" -copyright "© Adrian Liechti" -package ./app
+
+  run:client:
+    desc: Run the web UI dev server on http://localhost:5173 (pair with run:web, which serves the API on :7777)
+    cmds:
+      - npm run dev
+
+  run:web:
+    desc: Build the web UI and run the server in the browser
+    deps: [build:ui]
+    cmds:
+      - go run ./cmd/granite
+
+  run:app:
+    desc: Build and launch the desktop app with web inspection enabled
+    deps: [build:app]
+    env:
+      GRANITE_DEBUG: '1'
+    cmds:
+      - cmd: open -n --env GRANITE_DEBUG=1 app/build/bin/Granite.app
+        platforms: [darwin]
+      - cmd: app/build/bin/Granite.exe
+        platforms: [windows]
+
+  install:cli:
+    desc: Build and install the CLI to GOPATH/bin or GOBIN
+    deps: [build:ui]
+    cmds:
+      - go install ./cmd/granite
+
+  install:app:
+    desc: Build and install the desktop app (~/Applications on macOS, %LOCALAPPDATA%\Programs on Windows)
+    deps: [build:app]
+    cmds:
+      - cmd: mkdir -p ~/Applications
+        platforms: [darwin]
+      - cmd: rm -rf ~/Applications/Granite.app
+        platforms: [darwin]
+      - cmd: mv app/build/bin/Granite.app ~/Applications/
+        platforms: [darwin]
+      # Task runs cmds through its built-in POSIX shell (mvdan/sh) even on
+      # Windows, so env vars expand as $VAR, not %VAR%.
+      - cmd: mkdir -p "$LOCALAPPDATA/Programs"
+        platforms: [windows]
+      - cmd: rm -f "$LOCALAPPDATA/Programs/Granite.exe"
+        platforms: [windows]
+      - cmd: mv app/build/bin/Granite.exe "$LOCALAPPDATA/Programs/"
+        platforms: [windows]
+
+  install:
+    desc: Build and install both the CLI and the desktop app locally
+    cmds:
+      - task: install:cli
+      - task: install:app
 
   release:app:
     desc: Release the macOS desktop app + Homebrew cask (macOS only; needs GITHUB_TOKEN)

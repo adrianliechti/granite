@@ -1,4 +1,5 @@
 import type { ColumnInfo, DatabaseAdapter } from "./adapters/types";
+import { tableIdentifier } from "./adapters/types.ts";
 import { parameterPlaceholder } from "./adapters/rows.ts";
 
 export type ValueKind =
@@ -212,6 +213,8 @@ export function buildDataQuery(
   sorting: DataSort[],
   page: number,
   pageSize: number,
+  schema?: string,
+  after?: Record<string, unknown>,
 ) {
   if (
     !Number.isSafeInteger(page) ||
@@ -320,9 +323,15 @@ export function buildDataQuery(
       `(${searchable.map((c) => like(textColumn(c), term, "contains")).join(" OR ")})`,
     );
   }
-  const from = `FROM ${q(table)}${where.length ? ` WHERE ${where.join(" AND ")}` : ""}`;
+  const from = () =>
+    `FROM ${tableIdentifier(adapter, table, schema)}${where.length ? ` WHERE ${where.join(" AND ")}` : ""}`;
+  const countQuery = `SELECT COUNT(*) AS total ${from()}`;
+  const countParams = [...params];
+  const keys = columns
+    .filter((c) => c.primaryKey)
+    .sort((a, b) => (a.primaryKeyOrdinal ?? 0) - (b.primaryKeyOrdinal ?? 0));
   const sort = [...sorting];
-  for (const key of columns.filter((c) => c.primaryKey))
+  for (const key of keys)
     if (!sort.some((s) => s.id === key.name))
       sort.push({ id: key.name, desc: false });
   if (!sort.length) {
@@ -335,12 +344,49 @@ export function buildDataQuery(
   for (const entry of sort)
     if (!columns.some((c) => c.name === entry.id))
       throw new Error(`Unknown sort column: ${entry.id}`);
+  // Seek only on a known, non-null primary key. Sorts on other columns retain
+  // their complete ordering and offset paging; a column name proves no key.
+  const keyset =
+    keys.length > 0 &&
+    keys.every((column) =>
+      !column.nullable &&
+      editableColumn(column) &&
+      valueKind(column.type) !== "json" &&
+      // SQL Server timestamp/rowversion values are binary, not datetimes.
+      !(adapter.driver === "sqlserver" && /^(timestamp|rowversion)$/i.test(column.type)),
+    ) &&
+    sort.every((entry) => keys.some((key) => key.name === entry.id)) &&
+    (page === 0 || after !== undefined);
+  if (after !== undefined) {
+    if (!keyset || page === 0)
+      throw new Error("Invalid page cursor. Return to the first page.");
+    const values = sort.map((entry) => {
+      const column = keys.find((key) => key.name === entry.id)!;
+      if (after[column.name] == null)
+        throw new Error("The page cursor is missing a primary key value.");
+      return {
+        column,
+        value: parseCellValue(inputValue(after[column.name], column), column),
+      };
+    });
+    // Expand a lexicographic comparison so composite keys work in SQL Server
+    // too. Bind each occurrence separately for drivers with '?' parameters.
+    const comparisons = sort.map((entry, index) => {
+      const terms = values
+        .slice(0, index)
+        .map(({ column, value }) => `${q(column.name)} = ${bind(value, column)}`);
+      const { column, value } = values[index];
+      terms.push(`${q(entry.id)} ${entry.desc ? "<" : ">"} ${bind(value, column)}`);
+      return `(${terms.join(" AND ")})`;
+    });
+    where.push(`(${comparisons.join(" OR ")})`);
+  }
   const order = sort.length
     ? ` ORDER BY ${sort.map((s) => `${q(s.id)} ${s.desc ? "DESC" : "ASC"}`).join(", ")}`
     : adapter.driver === "sqlserver"
       ? " ORDER BY (SELECT NULL)"
       : "";
-  const offset = page * pageSize;
+  const offset = keyset ? 0 : page * pageSize;
   const limit = pageSize + 1;
   const pagination = ["oracle", "sqlserver"].includes(adapter.driver)
     ? ` OFFSET ${offset} ROWS FETCH NEXT ${limit} ROWS ONLY`
@@ -348,9 +394,14 @@ export function buildDataQuery(
       ? ` OFFSET ${offset} LIMIT ${limit}`
       : ` LIMIT ${limit} OFFSET ${offset}`;
   return {
-    query: `SELECT * ${from}${order}${pagination}`,
-    countQuery: `SELECT COUNT(*) AS total ${from}`,
+    query:
+      keyset && adapter.driver === "sqlserver"
+        ? `SELECT TOP (${limit}) * ${from()}${order}`
+        : `SELECT * ${from()}${order}${pagination}`,
+    countQuery,
+    countParams,
     params,
+    keyset,
   };
 }
 
@@ -359,6 +410,7 @@ export function buildInsert(
   table: string,
   columns: ColumnInfo[],
   values: Record<string, unknown>,
+  schema?: string,
 ) {
   const names = Object.keys(values);
   if (names.some((name) => !columns.some((c) => c.name === name)))
@@ -366,18 +418,18 @@ export function buildInsert(
   if (!names.length) {
     if (adapter.driver === "mysql")
       return {
-        query: `INSERT INTO ${adapter.quoteIdentifier(table)} () VALUES ()`,
+        query: `INSERT INTO ${tableIdentifier(adapter, table, schema)} () VALUES ()`,
         params: [],
       };
     if (["oracle", "trino"].includes(adapter.driver))
       throw new Error("Enter at least one column value.");
     return {
-      query: `INSERT INTO ${adapter.quoteIdentifier(table)} DEFAULT VALUES`,
+      query: `INSERT INTO ${tableIdentifier(adapter, table, schema)} DEFAULT VALUES`,
       params: [],
     };
   }
   return {
-    query: `INSERT INTO ${adapter.quoteIdentifier(table)} (${names.map((n) => adapter.quoteIdentifier(n)).join(", ")}) VALUES (${names
+    query: `INSERT INTO ${tableIdentifier(adapter, table, schema)} (${names.map((n) => adapter.quoteIdentifier(n)).join(", ")}) VALUES (${names
       .map((name, i) =>
         parameterPlaceholder(
           adapter.driver,

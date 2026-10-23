@@ -18,6 +18,7 @@ export interface QuerySetters {
 export interface QueryChatEnvironment {
   connection: Connection | null;
   database: string | null;
+  schemaName?: string;
   table: string | null;
   currentQuery: string;
   queryResult: SQLResponse | null;

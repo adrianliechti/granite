@@ -28,6 +28,7 @@ import { ObjectStorageBrowser } from "./ObjectStorageBrowser";
 import type { Connection } from "../types";
 import type { OpenQuery } from "../lib/queries";
 import { RowMenu } from "./RowMenu";
+import { databasePath } from "../lib/database";
 
 interface SidebarProps {
   showAddModal?: boolean;
@@ -79,7 +80,7 @@ export function Sidebar({
       );
     }
   }
-  const routeKey = routeKeys.join("|");
+  const routeKey = [...routeKeys, params.schema].join("|");
   const [previousRoute, setPreviousRoute] = useState(routeKey);
   if (routeKey !== previousRoute) {
     setPreviousRoute(routeKey);
@@ -153,41 +154,43 @@ export function Sidebar({
         />
       )}
       <aside
-        className={`sidebar panel ${collapsed ? "collapsed" : ""}`}
+        className={`sidebar ${collapsed ? "collapsed" : ""}`}
         aria-label="Connections"
       >
-        <div className="sidebar-header">
+        <div className="sidebar-titlebar">
           {!collapsed && (
-            <button className="font-semibold mr-auto" onClick={() => go("/")}>
+            <button className="sidebar-title" onClick={() => go("/")}>
               Granite
             </button>
           )}
-          <button
-            className="icon-button"
-            aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
-            title="⌘/Ctrl B"
-            onClick={onCollapse}
-          >
-            {collapsed ? (
-              <PanelLeftOpen size={16} />
-            ) : (
-              <PanelLeftClose size={16} />
-            )}
-          </button>
-          <button
-            className="icon-button"
-            aria-label="Add connection"
-            title="Add connection"
-            onClick={() => setModal({ open: true })}
-          >
-            <Plus size={16} />
-          </button>
+          <div className="ml-auto flex items-center gap-0.5">
+            <button
+              className="toolbar-button"
+              aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+              title="⌘/Ctrl B"
+              onClick={onCollapse}
+            >
+              {collapsed ? (
+                <PanelLeftOpen size={16} />
+              ) : (
+                <PanelLeftClose size={16} />
+              )}
+            </button>
+            <button
+              className="toolbar-button"
+              aria-label="Add connection"
+              title="Add connection"
+              onClick={() => setModal({ open: true })}
+            >
+              <Plus size={16} />
+            </button>
+          </div>
         </div>
         {!collapsed && (
           <>
-            <div className="flex items-center px-3 pb-2 gap-2">
+            <div className="sidebar-filter">
               <button
-                className={`text-button text-xs ${favoritesOnly ? "active" : ""}`}
+                className={`text-button ${favoritesOnly ? "active" : ""}`}
                 onClick={() => setFavoritesOnly(!favoritesOnly)}
                 aria-pressed={favoritesOnly}
               >
@@ -203,6 +206,7 @@ export function Sidebar({
                     predicate: (query) =>
                       [
                         "databases",
+                        "schemas",
                         "tables",
                         "table-columns",
                         "storage-tree",
@@ -267,6 +271,7 @@ export function Sidebar({
                           {decodeURIComponent(parts.at(-1) ?? "")}
                           <small className="block muted text-xs">
                             {conn.name} / {decodeURIComponent(parts[2])}
+                            {conn.sql?.driver === "postgres" && parts[3] === "schema" && parts.length > 4 ? ` / ${decodeURIComponent(parts[4])}` : ""}
                           </small>
                         </span>
                       </button>
@@ -378,18 +383,18 @@ export function Sidebar({
                           connection={conn}
                           expanded={expanded}
                           onToggle={toggle}
-                          onSelectDatabase={(db) =>
-                            go(`/${conn.id}/${encodeURIComponent(db)}`)
+                          onSelectDatabase={(db, schema) =>
+                            go(databasePath(conn.id, db, undefined, schema))
                           }
-                          onSelectTable={(db, tbl) =>
+                          onSelectTable={(db, tbl, schema) =>
                             go(
-                              `/${conn.id}/${encodeURIComponent(db)}/${encodeURIComponent(tbl)}`,
+                              databasePath(conn.id, db, tbl, schema),
                             )
                           }
                           favorites={favorites}
                           onFavorite={favorite}
-                          onOpenQuery={(database, sql, title) =>
-                            onOpenQuery(conn.id, database, sql, title)
+                          onOpenQuery={(database, sql, title, schema) =>
+                            onOpenQuery(conn.id, database, sql, title, schema)
                           }
                         />
                       ) : (

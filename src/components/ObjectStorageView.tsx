@@ -124,8 +124,8 @@ export function ObjectStorageView({
     onNavigate(container, next);
   };
   return (
-    <main className="workspace flex-1 min-w-0 flex flex-col gap-2">
-      <header className="workspace-header">
+    <main className="workspace flex-1 min-w-0 flex flex-col">
+      <header className="workspace-header app-toolbar window-controls-end">
         <nav className="breadcrumbs" aria-label="Breadcrumb">
           <span>{connection.name}</span>
           <ChevronRight size={12} />
@@ -430,10 +430,10 @@ export function StorageLanding({
       c.name.toLowerCase().includes(search.toLowerCase()),
     ) ?? [];
   return (
-    <main className="workspace flex-1 min-w-0 flex flex-col gap-2">
-      <header className="workspace-header">
-        {connection.name}
-        <span className="muted ml-auto text-xs">
+    <main className="workspace flex-1 min-w-0 flex flex-col">
+      <header className="workspace-header app-toolbar window-controls-end">
+        <span className="app-toolbar-title">{connection.name}</span>
+        <span className="muted text-xs">
           {connection.amazonS3 ? "S3" : "Azure Blob"}
         </span>
       </header>

@@ -1,4 +1,5 @@
 import type { DatabaseAdapter, Driver } from "./types";
+import { tableIdentifier } from "./types.ts";
 
 const tableColumns: Record<Driver, { id: string; name: string }> = {
   postgres: {
@@ -25,12 +26,13 @@ const tableColumns: Record<Driver, { id: string; name: string }> = {
 export function createTableTemplate(
   adapter: DatabaseAdapter,
   existingTables: string[] = [],
+  schema?: string,
 ): string {
   const names = new Set(existingTables.map((name) => name.toLowerCase()));
   let name = "new_table";
   for (let suffix = 2; names.has(name); suffix++) name = `new_table_${suffix}`;
   const columns = tableColumns[adapter.driver];
-  return `CREATE TABLE ${adapter.quoteIdentifier(name)} (
+  return `CREATE TABLE ${tableIdentifier(adapter, name, schema)} (
   ${adapter.quoteIdentifier("id")} ${columns.id},
   ${adapter.quoteIdentifier("name")} ${columns.name}
 );`;

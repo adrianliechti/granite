@@ -25,7 +25,7 @@ brew install --cask adrianliechti/tap/granite-app
 
 ```sh
 # build the frontend and run the server (opens your browser)
-task run
+task run:web
 ```
 
 Or manually:
@@ -51,7 +51,7 @@ Connections are stored in `~/.local/share/granite`. Set `GRANITE_DATA_DIR` to us
 
 Oracle uses the official pure Go driver, pinned to `v26.0.1-beta`, and requires Oracle Database 19c or newer and Go 1.26.6 or newer. It accepts Easy Connect and TNS Connect Descriptors; use `tcps://` for TLS. Existing Oracle connections need their DSN updated from `oracle://user:password@host:1521/service` to `user/password@tcp://host:1521/service`; the saved driver type remains `oracle`.
 
-PostgreSQL browsing currently lists tables in `public`. SQL Server browsing lists unqualified table names in the user's default schema and `dbo`. Oracle browsing lists tables owned by the connected user, and Trino's database selector represents `catalog.schema` pairs.
+PostgreSQL has a Schema switcher for each database, defaulting to `public`. It lists accessible user schemas and applies the selection to table browsing, metadata, row edits, SQL queries, and autocomplete. Links, favorites, and query drafts retain their schema. SQL Server browsing lists unqualified table names in the user's default schema and `dbo`. Oracle browsing lists tables owned by the connected user, and Trino's database selector represents `catalog.schema` pairs.
 
 ## AI assistant
 

@@ -15,7 +15,9 @@ func (s *Server) handleSQLBatch(w http.ResponseWriter, r *http.Request) {
 	}
 	var req struct {
 		Database   string `json:"database"`
+		Schema     string `json:"schema"`
 		MaxRows    int    `json:"maxRows"`
+		TimeoutMS  int    `json:"timeoutMs"`
 		Statements []struct {
 			Query       string `json:"query"`
 			ReturnsRows bool   `json:"returnsRows"`
@@ -28,13 +30,20 @@ func (s *Server) handleSQLBatch(w http.ResponseWriter, r *http.Request) {
 	if req.MaxRows < 1 || req.MaxRows > 10000 {
 		req.MaxRows = 1000
 	}
-	db, err := openDatabase(conn.SQL, req.Database)
+	// One timeout covers the whole batch.
+	ctx, cancel, err := withQueryTimeout(r.Context(), req.TimeoutMS)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	defer cancel()
+	db, err := openDatabase(conn.SQL, req.Database, req.Schema)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	defer db.Close()
-	session, err := db.Conn(r.Context())
+	session, err := db.Conn(ctx)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -42,7 +51,7 @@ func (s *Server) handleSQLBatch(w http.ResponseWriter, r *http.Request) {
 	defer session.Close()
 	results := make([]*SQLResponse, 0, len(req.Statements))
 	for _, statement := range req.Statements {
-		response, err := executeOnConnection(r.Context(), session, SQLRequest{Query: statement.Query, MaxRows: req.MaxRows}, statement.ReturnsRows)
+		response, err := executeStatement(ctx, session, SQLRequest{Query: statement.Query, MaxRows: req.MaxRows}, statement.ReturnsRows)
 		if err != nil {
 			results = append(results, &SQLResponse{Error: err.Error()})
 			break

@@ -6,7 +6,7 @@ interface WelcomePageProps {
 
 export function WelcomePage({ onAddConnection }: WelcomePageProps) {
   return (
-    <main className="flex-1 flex items-center justify-center">
+    <main className="window-drag flex-1 flex items-center justify-center">
       <div className="max-w-2xl px-8 text-center">
         {/* Logo/Title */}
         <div className="mb-6">

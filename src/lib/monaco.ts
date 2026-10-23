@@ -33,8 +33,9 @@ monaco.editor.defineTheme("granite-light", {
     { token: "operator", foreground: "627080" },
   ],
   colors: {
+    // bg / bg-surface from the shared tokens (index.css)
     "editor.background": "#ffffff",
-    "editor.lineHighlightBackground": "#f8f8f8",
+    "editor.lineHighlightBackground": "#f5f5f5",
     "editorLineNumber.foreground": "#858585",
   },
 });
@@ -49,8 +50,8 @@ monaco.editor.defineTheme("granite-dark", {
     { token: "operator", foreground: "A1ACBA" },
   ],
   colors: {
-    "editor.background": "#191919",
-    "editor.lineHighlightBackground": "#202020",
+    "editor.background": "#0a0a0a",
+    "editor.lineHighlightBackground": "#141414",
     "editorLineNumber.foreground": "#858585",
   },
 });

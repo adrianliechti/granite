@@ -8,6 +8,7 @@ export interface ColumnInfo {
   type: string;
   nullable: boolean;
   primaryKey: boolean;
+  primaryKeyOrdinal?: number;
 }
 
 // Query result from the backend
@@ -32,6 +33,16 @@ export function sqlLiteral(value: string): string {
   return value.replace(/'/g, "''");
 }
 
+export function tableIdentifier(
+  adapter: DatabaseAdapter,
+  table: string,
+  schema?: string,
+): string {
+  return schema
+    ? `${adapter.quoteIdentifier(schema)}.${adapter.quoteIdentifier(table)}`
+    : adapter.quoteIdentifier(table);
+}
+
 // Database adapter interface - each driver implements this
 export interface DatabaseAdapter {
   readonly driver: Driver;
@@ -42,17 +53,29 @@ export interface DatabaseAdapter {
   // Cheap connectivity-test query for this dialect
   pingQuery(): string;
 
+  // What the level above schemas is called: "Catalog" in Trino, else "Database".
+  readonly databaseLabel?: string;
+
   // SQL Queries
   listDatabasesQuery(): string;
-  listTablesQuery(): string;
-  listColumnsQuery(table: string): string;
-  selectAllQuery(table: string, limit?: number): string;
+
+  // Drivers with a schema level below the database list its schemas and name
+  // the one unqualified names resolve in by default (one row, column "name").
+  // sessionSchema says whether a picked schema can become that default for SQL
+  // typed in the editor; without it (SQL Server) only generated SQL is qualified.
+  listSchemasQuery?(): string;
+  parseSchemaNames?(rows: Record<string, unknown>[]): string[];
+  defaultSchemaQuery?(): string;
+  readonly sessionSchema?: boolean;
+  listTablesQuery(schema?: string): string;
+  listColumnsQuery(table: string, schema?: string): string;
+  selectAllQuery(table: string, limit?: number, schema?: string): string;
   createDatabaseQuery(name: string): string | null; // Returns null if not supported
 
   // Optional metadata queries - not all drivers support these
-  listConstraintsQuery?(table: string): string;
-  listForeignKeysQuery?(table: string): string;
-  listIndexesQuery?(table: string): string;
+  listConstraintsQuery?(table: string, schema?: string): string;
+  listForeignKeysQuery?(table: string, schema?: string): string;
+  listIndexesQuery?(table: string, schema?: string): string;
 
   // Returns which table views this driver supports
   supportedTableViews(): TableView[];

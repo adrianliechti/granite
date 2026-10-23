@@ -16,7 +16,7 @@ import { trinoAdapter } from "./trino";
 // Re-export types
 export type { DatabaseAdapter, Driver, ColumnInfo, TableView } from "./types";
 export type { QueryResult } from "./types";
-export { sqlLiteral } from "./types";
+export { sqlLiteral, tableIdentifier } from "./types";
 export { parameterPlaceholder, primaryKeyPredicate } from "./rows";
 
 // Re-export storage utilities
@@ -49,6 +49,8 @@ export async function executeQuery(
   params: unknown[] = [],
   signal?: AbortSignal,
   maxRows?: number,
+  schema?: string,
+  timeoutMs?: number,
 ): Promise<QueryResult> {
   return requestSQL(
     "query",
@@ -58,6 +60,8 @@ export async function executeQuery(
     params,
     signal,
     maxRows,
+    schema,
+    timeoutMs,
   );
 }
 
@@ -68,8 +72,11 @@ export async function executeStatement(
   database?: string,
   params: unknown[] = [],
   signal?: AbortSignal,
+  schema?: string,
 ): Promise<QueryResult> {
-  return requestSQL("execute", connectionId, query, database, params, signal);
+  return requestSQL(
+    "execute", connectionId, query, database, params, signal, undefined, schema,
+  );
 }
 
 async function requestSQL(
@@ -80,13 +87,15 @@ async function requestSQL(
   params: unknown[] = [],
   signal?: AbortSignal,
   maxRows?: number,
+  schema?: string,
+  timeoutMs?: number,
 ): Promise<QueryResult> {
   const response = await fetch(
     `/sql/${encodeURIComponent(connectionId)}/${endpoint}`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ query, params, database, maxRows }),
+      body: JSON.stringify({ query, params, database, maxRows, schema, timeoutMs }),
       signal,
     },
   );
@@ -106,10 +115,11 @@ export async function executeSQL(
   signal?: AbortSignal,
   maxRows?: number,
   driver?: Driver,
+  schema?: string,
 ): Promise<QueryResult> {
   return returnsRows(query, driver)
-    ? executeQuery(connectionId, query, database, [], signal, maxRows)
-    : executeStatement(connectionId, query, database, [], signal);
+    ? executeQuery(connectionId, query, database, [], signal, maxRows, schema)
+    : executeStatement(connectionId, query, database, [], signal, schema);
 }
 
 export async function executeBatch(
@@ -119,6 +129,7 @@ export async function executeBatch(
   signal: AbortSignal,
   maxRows: number,
   driver?: Driver,
+  schema?: string,
 ): Promise<QueryResult[]> {
   const response = await fetch(
     `/sql/${encodeURIComponent(connectionId)}/batch`,
@@ -128,6 +139,7 @@ export async function executeBatch(
       signal,
       body: JSON.stringify({
         database,
+        schema,
         maxRows,
         statements: queries.map((query) => ({
           query,
@@ -157,14 +169,41 @@ export async function listTables(
   connectionId: string,
   driver: string,
   database?: string,
+  schema?: string,
 ): Promise<string[]> {
   const adapter = getAdapter(driver);
 
-  const query = adapter.listTablesQuery();
+  const query = adapter.listTablesQuery(schema);
 
   const data = await executeQuery(connectionId, query, database);
 
   return adapter.parseTableNames(data.rows || [], database);
+}
+
+export async function listSchemas(
+  connectionId: string,
+  driver: string,
+  database?: string,
+): Promise<string[]> {
+  const adapter = getAdapter(driver);
+  if (!adapter.listSchemasQuery || !adapter.parseSchemaNames) return [];
+  const data = await executeQuery(connectionId, adapter.listSchemasQuery(), database);
+  return adapter.parseSchemaNames(data.rows || []);
+}
+
+// The schema unqualified names resolve in by default, or null when the driver
+// has no schema level or the connection has none selected (a Trino catalog).
+export async function getDefaultSchema(
+  connectionId: string,
+  driver: string,
+  database?: string,
+): Promise<string | null> {
+  const adapter = getAdapter(driver);
+  if (!adapter.defaultSchemaQuery) return null;
+  const data = await executeQuery(connectionId, adapter.defaultSchemaQuery(), database);
+  const row = data.rows?.[0];
+  const name = row?.name ?? row?.NAME;
+  return name == null || name === "" ? null : String(name);
 }
 
 export async function listColumns(
@@ -172,9 +211,10 @@ export async function listColumns(
   driver: string,
   table: string,
   database?: string,
+  schema?: string,
 ): Promise<ColumnInfo[]> {
   const adapter = getAdapter(driver);
-  const query = adapter.listColumnsQuery(table);
+  const query = adapter.listColumnsQuery(table, schema);
 
   const data = await executeQuery(connectionId, query, database);
 
@@ -240,20 +280,21 @@ export function getTableViewQuery(
   driver: string,
   table: string,
   view: TableView,
+  schema?: string,
 ): string | null {
   const adapter = getAdapter(driver);
 
   switch (view) {
     case "records":
-      return adapter.selectAllQuery(table);
+      return adapter.selectAllQuery(table, undefined, schema);
     case "columns":
-      return adapter.listColumnsQuery(table);
+      return adapter.listColumnsQuery(table, schema);
     case "constraints":
-      return adapter.listConstraintsQuery?.(table) ?? null;
+      return adapter.listConstraintsQuery?.(table, schema) ?? null;
     case "foreignKeys":
-      return adapter.listForeignKeysQuery?.(table) ?? null;
+      return adapter.listForeignKeysQuery?.(table, schema) ?? null;
     case "indexes":
-      return adapter.listIndexesQuery?.(table) ?? null;
+      return adapter.listIndexesQuery?.(table, schema) ?? null;
     default:
       return null;
   }

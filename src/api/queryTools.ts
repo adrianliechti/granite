@@ -132,13 +132,14 @@ export function createQueryTools(environment: QueryChatEnvironment) {
 
 // Build instructions for the SQL chat assistant
 export function buildQueryInstructions(environment: QueryChatEnvironment): string {
-  const { connection, database, table, currentQuery, schema } = environment;
+  const { connection, database, schemaName, table, currentQuery, schema } = environment;
   
   // Build current environment section
   const envLines: string[] = [];
   if (connection && connection.sql) {
     envLines.push(`- **Driver**: ${connection.sql.driver}`);
     envLines.push(`- **Database**: ${database || '(none selected)'}`);
+    if (schemaName) envLines.push(`- **Selected schema**: ${schemaName}`);
     envLines.push(`- **Table**: ${table || '(none selected)'}`);
   } else {
     envLines.push('- Not connected to a database');

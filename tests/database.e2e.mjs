@@ -16,6 +16,7 @@ import {
   emptyFilters,
 } from "../src/lib/data.ts";
 import { parameterPlaceholder } from "../src/lib/adapters/rows.ts";
+import { databasePath } from "../src/lib/database.ts";
 
 const baseURL = process.env.GRANITE_TEST_URL;
 assert.ok(
@@ -91,8 +92,8 @@ async function request(path, body, method = "POST") {
   return data;
 }
 
-function sql(id, query, database, params = [], endpoint = "query") {
-  return request(`/sql/${id}/${endpoint}`, { query, database, params });
+function sql(id, query, database, params = [], endpoint = "query", schema) {
+  return request(`/sql/${id}/${endpoint}`, { query, database, params, schema });
 }
 
 function normalizedRows(result) {
@@ -102,6 +103,173 @@ function normalizedRows(result) {
     ),
   );
 }
+
+test('postgres: schema switching isolates tables, metadata, edits, queries, and favorites', {
+  timeout: 120_000,
+  skip: selected && !selected.includes('postgres'),
+}, async (t) => {
+  const { database, dsn, alternateDSNs } = cases[0];
+  const suffix = Date.now().toString(36);
+  const id = `schemas-${suffix}`;
+  const schema = `tenant_${suffix} '" , ./`;
+  const emptySchema = `empty_${suffix}`;
+  const table = `same_table_${suffix}`;
+  const parent = `parent_${suffix}`;
+  const q = (name) => postgresAdapter.quoteIdentifier(name);
+  const execute = (query, namespace, params = []) => sql(id, query, database, params, 'execute', namespace);
+  const query = (query, namespace) => sql(id, query, database, [], 'query', namespace);
+  const cleanups = [];
+  t.after(async () => {
+    const failures = [];
+    for (const cleanup of cleanups.reverse()) {
+      try { await cleanup(); } catch (error) { failures.push(error); }
+    }
+    if (failures.length) throw new AggregateError(failures, 'Schema test cleanup failed');
+  });
+  await request('/connections', { id, name: 'Schema switching', sql: { driver: 'postgres', dsn } });
+  cleanups.push(() => request(`/connections/${id}`, undefined, 'DELETE'));
+  await execute(`CREATE SCHEMA ${q(schema)}`);
+  cleanups.push(() => execute(`DROP SCHEMA ${q(schema)} CASCADE`));
+  await execute(`CREATE SCHEMA ${q(emptySchema)}`);
+  cleanups.push(() => execute(`DROP SCHEMA ${q(emptySchema)} CASCADE`));
+  await execute(`CREATE TABLE public.${q(table)} (id INTEGER PRIMARY KEY, note TEXT, public_only TEXT)`);
+  cleanups.push(() => execute(`DROP TABLE public.${q(table)}`));
+  await execute(`INSERT INTO public.${q(table)} VALUES (1, 'public row', 'public column')`);
+  // Unqualified DDL, writes, and reads must all use the selected schema.
+  await execute(`CREATE TABLE ${q(parent)} (id INTEGER PRIMARY KEY)`, schema);
+  await execute(`INSERT INTO ${q(parent)} VALUES (1), (2)`, schema);
+  await execute(`CREATE TABLE ${q(table)} (id INTEGER PRIMARY KEY, note TEXT, tenant_only TEXT, FOREIGN KEY (id) REFERENCES ${q(parent)}(id))`, schema);
+  await execute(`INSERT INTO ${q(table)} VALUES ($1, $2, $3)`, schema, [1, 'tenant row', 'tenant column']);
+  assert.equal((await query(`SELECT note FROM ${q(table)}`, schema)).rows[0].note, 'tenant row');
+  assert.equal((await query(`SELECT note FROM ${q(table)}`, 'public')).rows[0].note, 'public row');
+
+  const schemas = postgresAdapter.parseSchemaNames((await query(postgresAdapter.listSchemasQuery())).rows);
+  for (const name of ['public', schema, emptySchema]) assert.ok(schemas.includes(name), name);
+  assert.ok(!schemas.includes('pg_catalog'));
+  assert.ok(!schemas.includes('information_schema'));
+  const columns = postgresAdapter.parseColumns((await query(postgresAdapter.listColumnsQuery(table, schema))).rows);
+  assert.deepEqual(columns.map((column) => column.name), ['id', 'note', 'tenant_only']);
+  assert.deepEqual(columns.filter((column) => column.primaryKey).map((column) => column.name), ['id']);
+  assert.ok((await query(postgresAdapter.listIndexesQuery(table, schema))).rows.length);
+  assert.ok((await query(postgresAdapter.listConstraintsQuery(table, schema))).rows.length);
+  const foreignKeys = (await query(postgresAdapter.listForeignKeysQuery(table, schema))).rows;
+  assert.equal(foreignKeys[0].foreign_schema, schema);
+  assert.equal(foreignKeys[0].foreign_table, parent);
+  // Keyword DSNs and the DSN's default database also accept schema selection.
+  const alternateID = `${id}-keywords`;
+  await request('/connections', {
+    id: alternateID, name: alternateID,
+    sql: { driver: 'postgres', dsn: alternateDSNs[0] },
+  });
+  cleanups.push(() => request(`/connections/${alternateID}`, undefined, 'DELETE'));
+  assert.equal((await sql(alternateID, `SELECT note FROM ${q(table)}`, database, [], 'query', schema)).rows[0].note, 'tenant row');
+  assert.equal((await sql(alternateID, 'SELECT current_schema() AS selected', undefined, [], 'query', 'public')).rows[0].selected, 'public');
+
+  const page = await browser.newPage();
+  cleanups.push(() => page.close());
+  const errors = [];
+  page.on('pageerror', (error) => errors.push(error.message));
+  const location = (name, tableName) => `${baseURL}${databasePath(id, database, tableName, name)}`;
+  await page.goto(location('public', table));
+  const main = page.locator('main');
+  const switcher = main.getByRole('combobox', { name: 'Schema', exact: true });
+  await expect(switcher).toHaveValue('public');
+  await expect(page.getByRole('cell', { name: 'public row', exact: true })).toBeVisible();
+  await switcher.selectOption(schema);
+  await expect(page).toHaveURL(location(schema));
+  await page.getByRole('navigation', { name: 'Database and storage browser' }).getByRole('button', { name: table, exact: true }).click();
+  await expect(page).toHaveURL(location(schema, table));
+  await expect(page.getByRole('cell', { name: 'tenant row', exact: true })).toBeVisible();
+  await expect(page.getByRole('cell', { name: 'public row', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('columnheader', { name: /tenant_only/ })).toBeVisible();
+  await expect(page.getByRole('columnheader', { name: /public_only/ })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Count rows', exact: true }).click();
+  await expect(page.getByRole('button', { name: '1 total', exact: true })).toBeVisible();
+  await page.getByRole('cell', { name: 'tenant row', exact: true }).locator('.cell-value').click();
+  await page.getByLabel('Value for note', { exact: true }).fill('edited tenant');
+  await page.getByLabel('Value for note', { exact: true }).press('Enter');
+  await expect(page.getByRole('cell', { name: 'edited tenant', exact: true })).toBeVisible();
+  assert.equal((await query(`SELECT note FROM ${q(table)}`, 'public')).rows[0].note, 'public row');
+
+  await page.getByRole('button', { name: 'New row', exact: true }).click();
+  const insert = page.getByRole('complementary', { name: 'New row' });
+  for (const [name, value] of [['id', '2'], ['note', 'inserted tenant']]) {
+    await insert.getByLabel(`Value mode for ${name}`, { exact: true }).selectOption('value');
+    await insert.getByLabel(`New ${name}`, { exact: true }).fill(value);
+  }
+  await insert.getByRole('button', { name: 'Insert row', exact: true }).click();
+  await expect(insert).toHaveCount(0);
+  const insertedRow = page.getByRole('row').filter({ has: page.getByRole('cell', { name: 'inserted tenant', exact: true }) });
+  await insertedRow.getByRole('button', { name: 'Delete row', exact: true }).click();
+  await page.getByRole('button', { name: 'Confirm delete', exact: true }).click();
+  await expect(page.getByRole('cell', { name: 'inserted tenant', exact: true })).toHaveCount(0);
+  assert.equal((await query(`SELECT COUNT(*) AS total FROM ${q(table)}`, schema)).rows[0].total, 1);
+
+  await page.getByRole('button', { name: 'Structure', exact: true }).click();
+  await expect(page.getByRole('cell', { name: 'tenant_only', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Foreign keys', exact: true }).click();
+  await expect(page.getByRole('cell', { name: schema, exact: true })).toBeVisible();
+  await page.getByRole('button', { name: `Actions for table ${table}`, exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Add to favorites', exact: true }).click();
+  await page.getByRole('button', { name: 'SQL', exact: true }).click();
+  await page.locator('.monaco-editor').waitFor();
+  const replaceSQL = async (text) => {
+    await page.locator('.view-lines').click({ position: { x: 70, y: 10 } });
+    await page.keyboard.press('ControlOrMeta+A');
+    await page.keyboard.insertText(text);
+  };
+  await replaceSQL(`SELECT t. FROM ${q(table)} t;`);
+  await page.keyboard.press('ArrowLeft');
+  for (let index = 0; index < ` FROM ${q(table)} t`.length; index++) await page.keyboard.press('ArrowLeft');
+  await page.keyboard.press('Control+Space');
+  await expect(page.locator('.suggest-widget.visible')).toContainText('tenant_only');
+  await expect(page.locator('.suggest-widget.visible')).not.toContainText('public_only');
+  await page.keyboard.press('Escape');
+  const draft = `SELECT note FROM ${q(table)};`;
+  await replaceSQL(draft);
+  await page.getByRole('button', { name: 'Run statement', exact: true }).click();
+  await expect(page.getByRole('cell', { name: 'edited tenant', exact: true })).toBeVisible();
+  await replaceSQL(`SELECT current_schema(); SELECT note FROM ${q(table)};`);
+  await page.getByLabel('More run options', { exact: true }).click();
+  await page.getByRole('button', { name: /Run all ·/ }).click();
+  await expect(page.getByRole('button', { name: 'Result 2', exact: true })).toBeVisible();
+  await expect(page.getByRole('cell', { name: 'edited tenant', exact: true })).toBeVisible();
+  await replaceSQL(draft);
+
+  await switcher.selectOption(emptySchema);
+  await expect(page.getByRole('navigation', { name: 'Database and storage browser' }).getByText('No tables', { exact: true })).toBeVisible();
+  await expect(page.locator('.view-lines')).not.toContainText(table);
+  await switcher.selectOption('public');
+  await expect(page.locator('.view-lines')).not.toContainText(table);
+  await page.getByRole('button', { name: 'Favorites', exact: true }).click();
+  const favorites = page.getByRole('navigation', { name: 'Database and storage browser' });
+  await expect(favorites).toContainText(schema);
+  await favorites.getByRole('button').filter({ hasText: table }).click();
+  await expect(page).toHaveURL(location(schema, table));
+  await expect(switcher).toHaveValue(schema);
+  await expect(page.getByRole('cell', { name: 'edited tenant', exact: true })).toBeVisible();
+  await page.reload();
+  await expect(switcher).toHaveValue(schema);
+  await expect(page.getByRole('cell', { name: 'edited tenant', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'SQL', exact: true }).click();
+  await expect(page.locator('.view-lines')).toContainText(table);
+  await page.getByRole('button', { name: 'Run statement', exact: true }).click();
+  await expect(page.getByRole('cell', { name: 'edited tenant', exact: true })).toBeVisible();
+  // Browser history restores the previous schema as well as the route.
+  await switcher.selectOption('public');
+  await page.goBack();
+  await expect(switcher).toHaveValue(schema);
+  await expect(page.getByRole('cell', { name: 'edited tenant', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Favorites', exact: true }).click();
+  const screenshot = process.env.GRANITE_E2E_SCHEMA_SCREENSHOT;
+  if (screenshot) await page.screenshot({ path: `${screenshot}-desktop.png` });
+  await page.getByRole('button', { name: 'Collapse sidebar', exact: true }).click();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(switcher).toBeInViewport();
+  assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth));
+  if (screenshot) await page.screenshot({ path: `${screenshot}-mobile.png` });
+  assert.deepEqual(errors, []);
+});
 
 for (const entry of cases) {
   const { adapter, database, dsn } = entry;
@@ -590,6 +758,9 @@ for (const entry of cases) {
       await expect(page.locator(".view-lines")).toContainText("CREATE TABLE");
       await expect(lookupTab).toBeVisible();
       const createdTable = `e2e_created_${suffix}`;
+      const browserTable = driver === "postgres"
+        ? `${q("public")}.${q(createdTable)}`
+        : q(createdTable);
       const template = (
         await page.locator(".view-lines .view-line").allTextContents()
       )
@@ -604,7 +775,7 @@ for (const entry of cases) {
       await find.press("Escape");
       await page.keyboard.insertText(createdTable);
       const created = waitForSQL("execute", (statement) =>
-        statement.startsWith(`CREATE TABLE ${q(createdTable)}`),
+        statement.startsWith(`CREATE TABLE ${browserTable}`),
       );
       await page
         .getByRole("button", { name: "Run statement", exact: true })
@@ -650,7 +821,7 @@ for (const entry of cases) {
         .getByRole("menuitem", { name: "Delete table…", exact: true })
         .click();
       await expect(page.locator(".view-lines")).toContainText(
-        `DROP TABLE ${q(createdTable)};`,
+        `DROP TABLE ${browserTable};`,
       );
       // Preparing the DROP never executes it; the table remains until Run.
       assert.equal(
@@ -662,7 +833,7 @@ for (const entry of cases) {
         1,
       );
       const deleted = waitForSQL("execute", (statement) =>
-        statement.startsWith(`DROP TABLE ${q(createdTable)}`),
+        statement.startsWith(`DROP TABLE ${browserTable}`),
       );
       await page
         .getByRole("button", { name: "Run statement", exact: true })
@@ -763,7 +934,7 @@ test(
       sql(id, query, "main", params, "execute");
     const query = (query, params = []) => sql(id, query, "main", params);
     await execute(
-      `CREATE TABLE "${table}" (id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE, score DECIMAL, enabled BOOLEAN, joined DATE, metadata JSON, note TEXT)`,
+      `CREATE TABLE "${table}" (id INTEGER PRIMARY KEY NOT NULL, name TEXT NOT NULL UNIQUE, score DECIMAL, enabled BOOLEAN, joined DATE, metadata JSON, note TEXT)`,
     );
     const extraTables = Array.from(
       { length: 52 },
@@ -793,7 +964,16 @@ test(
     await expect(
       page.getByRole("button", { name: "Next page" }),
     ).toBeInViewport();
+    const nextPageRequest = page.waitForRequest((request) =>
+      request.url().endsWith(`/sql/${id}/query`) &&
+      request.postDataJSON()?.query.startsWith(`SELECT * FROM "${table}"`),
+    );
     await page.getByRole("button", { name: "Next page" }).click();
+    const nextPageBody = (await nextPageRequest).postDataJSON();
+    assert.match(nextPageBody.query, /WHERE \(\("id" > \?\)\)/);
+    assert.match(nextPageBody.query, /LIMIT 101 OFFSET 0$/);
+    assert.deepEqual(nextPageBody.params, [{ type: "number", value: "100" }]);
+    assert.equal(nextPageBody.timeoutMs, 30_000);
     await expect(
       page.getByRole("cell", { name: "Person 101", exact: true }),
     ).toBeVisible();

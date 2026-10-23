@@ -30,9 +30,21 @@ const tableRoute = createRoute({
   path: '$connectionId/$database/$table',
 });
 
+const schemaRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '$connectionId/$database/schema/$schema',
+});
+
+const schemaTableRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '$connectionId/$database/schema/$schema/$table',
+});
+
 const routeTree = rootRoute.addChildren([
   indexRoute,
   storageRoute,   // Most specific: has literal "container" segment
+  schemaTableRoute,
+  schemaRoute,
   tableRoute,     // 3 params
   databaseRoute,  // 2 params
   connectionRoute, // 1 param (least specific)

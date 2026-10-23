@@ -1,5 +1,210 @@
 @import "tailwindcss";
 
+/* Design tokens shared with wingman-agent: one neutral palette, light by
+   default and dark with the system. Utilities read them as bg-bg, text-fg-muted,
+   border-border-subtle, ...; plain CSS reads var(--color-*). */
+@theme {
+  --color-bg: #ffffff;
+  --color-bg-surface: #f5f5f5;
+  --color-bg-elevated: #ececec;
+  --color-bg-hover: #e8e8e8;
+  --color-bg-active: #dcdcdc;
+  --color-bg-input: #fafafa;
+
+  --color-fg: #171717;
+  --color-fg-muted: #4f4f4f;
+  --color-fg-dim: #666666;
+
+  --color-border: #d4d4d4;
+  --color-border-subtle: #e5e5e5;
+  --color-border-strong: #a3a3a3;
+
+  --color-accent: #525252;
+  --color-focus: #525252;
+
+  --color-success: #059669;
+  --color-danger: #dc2626;
+  --color-warning: #d97706;
+  --color-info: #2563eb;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-bg: #0a0a0a;
+    --color-bg-surface: #141414;
+    --color-bg-elevated: #1c1c1c;
+    --color-bg-hover: #1f1f1f;
+    --color-bg-active: #2a2a2a;
+    --color-bg-input: #181818;
+
+    --color-fg: #e6e6e6;
+    --color-fg-muted: #b3b3b3;
+    --color-fg-dim: #8b8b8b;
+
+    --color-border: #2a2a2a;
+    --color-border-subtle: #1f1f1f;
+    --color-border-strong: #404040;
+
+    --color-accent: #a3a3a3;
+    --color-focus: #a3a3a3;
+
+    --color-success: #34d399;
+    --color-danger: #f87171;
+    --color-warning: #fbbf24;
+    --color-info: #60a5fa;
+  }
+}
+
+/* App shell, macOS 27 style: a flush, full-height sidebar beside the content,
+   both topped by a 48px row that doubles as the window's title bar. */
+@layer components {
+  .sidebar {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    background: var(--color-bg-surface);
+  }
+
+  .sidebar-titlebar {
+    display: flex;
+    flex-shrink: 0;
+    align-items: center;
+    gap: 0.25rem;
+    height: 3rem;
+    padding: 0 0.5rem 0 1rem;
+  }
+
+  /* Hidden on macOS, where the traffic lights take its place; actions after it
+     push themselves to the end with margin-left: auto. */
+  .sidebar-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--color-fg);
+  }
+
+  /* Sections and items share one list padded px-2 (0.5rem): labels start just
+     left of the item icons, like Finder's. */
+  .sidebar-section {
+    display: flex;
+    align-items: center;
+    gap: 0.25rem;
+    width: 100%;
+    padding: 0.875rem 0.625rem 0.25rem 0.5rem;
+    font-size: 11px;
+    font-weight: 600;
+    line-height: 1rem;
+    color: var(--color-fg-dim);
+    text-align: left;
+  }
+
+  .sidebar-item {
+    display: flex;
+    align-items: center;
+    gap: 0.625rem;
+    width: 100%;
+    min-height: 1.75rem;
+    padding: 0.25rem 0.625rem;
+    border-radius: 0.375rem;
+    font-size: 13px;
+    line-height: 1.25rem;
+    color: var(--color-fg);
+    text-align: left;
+    transition: background-color 120ms ease;
+  }
+
+  .sidebar-item:hover {
+    background: var(--color-bg-hover);
+  }
+
+  .sidebar-item[aria-current]:not([aria-current='false']) {
+    background: var(--color-bg-active);
+  }
+
+  .sidebar-item > svg:first-child {
+    flex-shrink: 0;
+    width: 1rem;
+    height: 1rem;
+    color: var(--color-fg-muted);
+  }
+
+  .app-toolbar {
+    display: flex;
+    flex-shrink: 0;
+    align-items: center;
+    gap: 0.5rem;
+    height: 3rem;
+    padding: 0 0.75rem 0 1.25rem;
+  }
+
+  .app-toolbar-title {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--color-fg);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .toolbar-button {
+    display: inline-flex;
+    flex-shrink: 0;
+    align-items: center;
+    justify-content: center;
+    width: 2rem;
+    height: 2rem;
+    border-radius: 0.375rem;
+    color: var(--color-fg-muted);
+    transition:
+      background-color 120ms ease,
+      color 120ms ease;
+  }
+
+  .toolbar-button:hover {
+    background: var(--color-bg-hover);
+    color: var(--color-fg);
+  }
+
+  .toolbar-button[aria-pressed='true'] {
+    background: var(--color-bg-active);
+    color: var(--color-fg);
+  }
+}
+
+/* Desktop window chrome. With go-shell's overlay title bar the page draws under
+   the native title bar: <html data-window-chrome> names the platform, and
+   --shell-titlebar-inset-left / -right reserve the macOS traffic lights and the
+   Windows caption buttons. A browser sets none of it, so these rules stay inert. */
+.window-drag,
+.sidebar-titlebar,
+.app-toolbar {
+  --shell-window-drag: drag;
+}
+
+/* The drag hint inherits, so controls inside a drag region opt back out. */
+:is(.window-drag, .sidebar-titlebar, .app-toolbar)
+  :where(button, a, input, select, textarea, summary, label, [role], [tabindex]),
+.window-no-drag {
+  --shell-window-drag: no-drag;
+}
+
+/* macOS: the traffic lights sit in the sidebar's top row, or in the toolbar
+   while the sidebar is hidden. */
+html[data-window-chrome='macos-overlay'] .sidebar-titlebar,
+html[data-window-chrome='macos-overlay'] .window-controls-start {
+  padding-left: var(--shell-titlebar-inset-left);
+}
+
+html[data-window-chrome='macos-overlay'] .sidebar-title {
+  display: none;
+}
+
+/* Windows: the caption buttons cover the top-right corner. */
+html[data-window-chrome='windows-overlay'] .window-controls-end {
+  padding-right: var(--shell-titlebar-inset-right);
+}
+
 html,
 body {
   overflow: hidden;
@@ -15,38 +220,25 @@ body {
   overflow: hidden;
 }
 
+/* Granite's variables follow the shared tokens above (light and dark). */
 :root {
   color-scheme: light dark;
-  --canvas: #f6f6f6;
-  --surface: #fff;
-  --subtle: #fafafa;
-  --hover: #f1f1f1;
-  --text: #292929;
-  --muted: #686868;
-  --border: #e4e4e4;
-  --accent: #365f91;
-  --selection: #edf2f7;
-  --danger: #b43434;
+  --canvas: var(--color-bg);
+  --surface: var(--color-bg);
+  --subtle: var(--color-bg-surface);
+  --hover: var(--color-bg-hover);
+  --text: var(--color-fg);
+  --muted: var(--color-fg-muted);
+  --border: var(--color-border-subtle);
+  --accent: var(--color-fg);
+  --selection: var(--color-bg-active);
+  --danger: var(--color-danger);
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   color: var(--text);
   font-size: 16px;
 }
 body {
   font-size: 13px;
-}
-@media (prefers-color-scheme: dark) {
-  :root {
-    --canvas: #111;
-    --surface: #191919;
-    --subtle: #1d1d1d;
-    --hover: #262626;
-    --text: #dedede;
-    --muted: #a1a1a1;
-    --border: #303030;
-    --accent: #9abce6;
-    --selection: #243040;
-    --danger: #ee9898;
-  }
 }
 button,
 summary,
@@ -65,7 +257,7 @@ button:disabled {
   opacity: 0.45;
 }
 :focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--color-focus);
   outline-offset: 2px;
   border-radius: 3px;
 }
@@ -87,16 +279,12 @@ summary svg {
 }
 .app-shell {
   display: flex;
-  gap: 10px;
   height: 100dvh;
-  padding: 10px;
   background: var(--canvas);
   color: var(--text);
 }
 .panel {
   background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 7px;
   overflow: hidden;
 }
 .toolbar {
@@ -145,6 +333,10 @@ summary:hover {
 .text-button.active,
 .icon-button.active {
   color: var(--accent);
+}
+.text-button.active,
+.icon-button.active {
+  background: var(--selection);
 }
 .icon-button.quiet {
   color: var(--muted);
@@ -324,12 +516,7 @@ select option {
   background: var(--hover);
 }
 .workspace-header {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-height: 35px;
-  padding: 0 4px;
-  flex-shrink: 0;
+  border-bottom: 1px solid var(--border);
 }
 .breadcrumbs {
   display: flex;
@@ -396,60 +583,79 @@ select option {
   position: relative;
   flex-shrink: 0;
 }
+.sidebar-wrap.is-collapsed {
+  width: 44px;
+}
 .sidebar {
   height: 100%;
   width: 100%;
-  display: flex;
-  flex-direction: column;
-  background: var(--subtle);
 }
-.sidebar-header {
+.sidebar-filter {
   display: flex;
   align-items: center;
-  gap: 2px;
-  padding: 8px 10px;
-  min-height: 44px;
+  gap: 4px;
+  padding: 0 8px 4px;
+}
+.sidebar-filter .text-button,
+.sidebar-filter .icon-button {
+  color: var(--color-fg-dim);
+}
+.sidebar-filter .text-button {
+  font-size: 11px;
+  font-weight: 600;
+}
+.sidebar-filter .text-button.active {
+  color: var(--color-fg);
 }
 .sidebar-tree {
   overflow: auto;
-  padding: 0 6px 16px;
+  padding: 0 8px 16px;
   flex: 1;
 }
+/* Tree rows take the shared .sidebar-item look, keeping their chevrons. */
 .tree-row {
   display: flex;
   align-items: center;
   gap: 0;
-  border-radius: 4px;
-  min-height: 32px;
+  border-radius: 0.375rem;
+  min-height: 1.75rem;
+  transition: background-color 120ms ease;
 }
 .tree-row:hover {
-  background: var(--hover);
+  background: var(--color-bg-hover);
 }
 .tree-row.active {
-  background: var(--selection);
+  background: var(--color-bg-active);
 }
 .tree-toggle {
-  width: 19px;
+  width: 18px;
   height: 28px;
   display: flex;
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  color: var(--muted);
+  color: var(--color-fg-dim);
 }
 .tree-label {
   display: flex;
   align-items: center;
-  gap: 7px;
-  padding: 6px 4px;
+  gap: 0.625rem;
+  padding: 0.25rem 0.375rem;
   text-align: left;
   min-width: 0;
   flex: 1;
-  font-size: 12px;
+  font-size: 13px;
+  line-height: 1.25rem;
+  color: var(--color-fg);
+}
+.tree-label.muted {
+  color: var(--color-fg-muted);
 }
 .tree-label svg {
   flex-shrink: 0;
-  color: var(--muted);
+  width: 1rem;
+  height: 1rem;
+  color: var(--color-fg-muted);
 }
 .tree-label > span {
   overflow: hidden;
@@ -457,7 +663,7 @@ select option {
   white-space: nowrap;
 }
 .tree-children {
-  margin-left: 13px;
+  margin-left: 14px;
 }
 .tree-message {
   font-size: 11px;
@@ -467,9 +673,6 @@ select option {
 }
 .tree-message.danger {
   color: var(--danger);
-}
-.connection-row {
-  font-weight: 500;
 }
 .row-menu-trigger {
   opacity: 0;
@@ -517,10 +720,24 @@ select option {
     opacity: 0.65;
   }
 }
-.sidebar.collapsed .sidebar-header {
-  padding: 8px 0;
+/* The collapsed rail stacks its titlebar buttons; on macOS it is as wide as the
+   traffic lights and starts the buttons below them. */
+.sidebar.collapsed .sidebar-titlebar {
+  height: auto;
   flex-direction: column;
   gap: 8px;
+  padding: 8px 0;
+}
+.sidebar.collapsed .sidebar-titlebar > div {
+  flex-direction: column;
+  margin-left: 0;
+}
+html[data-window-chrome="macos-overlay"] .sidebar-wrap.is-collapsed {
+  width: var(--shell-titlebar-inset-left);
+}
+html[data-window-chrome="macos-overlay"] .sidebar.collapsed .sidebar-titlebar {
+  padding-left: 0;
+  padding-top: var(--shell-titlebar-height);
 }
 .sidebar.collapsed .sidebar-tree {
   padding: 0;
@@ -531,17 +748,30 @@ select option {
 .rail-connection {
   margin-top: 8px;
 }
+/* A 1px divider with a wider hit area for resizing. */
 .sidebar-resize {
   position: absolute;
   top: 0;
   bottom: 0;
-  right: -6px;
-  width: 5px;
+  right: -3px;
+  z-index: 2;
+  width: 7px;
   cursor: col-resize;
   touch-action: none;
 }
-.sidebar-resize:hover {
-  background: var(--border);
+/* Like the other apps' sidebars, no divider until the handle is hovered. */
+.sidebar-resize::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 3px;
+  width: 1px;
+  background: transparent;
+  transition: background-color 120ms ease;
+}
+.sidebar-resize:hover::after {
+  background: var(--color-border-strong);
 }
 .sidebar-backdrop {
   display: none;
@@ -831,16 +1061,15 @@ select option {
   width: 340px;
   max-width: 36%;
   background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 7px;
+  border-left: 1px solid var(--border);
 }
 @media (max-width: 1199px) {
   .ai-panel {
     position: fixed;
     z-index: 45;
-    top: 10px;
-    right: 10px;
-    bottom: 10px;
+    top: 0;
+    right: 0;
+    bottom: 0;
     width: 360px;
     max-width: calc(100vw - 64px);
     box-shadow: -15px 0 45px #0002;
@@ -854,17 +1083,14 @@ select option {
   }
 }
 @media (max-width: 719px) {
-  .app-shell {
-    gap: 6px;
-    padding: 6px;
-  }
   .sidebar-wrap:not(.is-collapsed) {
     position: fixed;
-    left: 6px;
-    top: 6px;
-    bottom: 6px;
+    left: 0;
+    top: 0;
+    bottom: 0;
     z-index: 40;
     max-width: calc(100vw - 48px);
+    box-shadow: 8px 0 30px #0003;
   }
   .sidebar-backdrop {
     display: block;
@@ -872,9 +1098,6 @@ select option {
     inset: 0;
     z-index: 39;
     background: #0004;
-  }
-  .workspace-header {
-    min-height: 34px;
   }
   .breadcrumbs {
     gap: 5px;
@@ -928,21 +1151,58 @@ select option {
   border-radius: 0;
 }
 .database-header {
-  display: flex;
-  align-items: center;
   gap: 10px;
-  min-height: 46px;
-  padding: 6px 12px;
-  background: var(--subtle);
   border-bottom: 1px solid var(--border);
-  flex-shrink: 0;
 }
 .database-header .breadcrumbs {
   flex: 1;
-  font-size: 12px;
 }
-.database-header .breadcrumbs > span:last-child {
-  font-weight: 500;
+/* The last crumb reads as the toolbar title. */
+.app-toolbar .breadcrumbs > :is(button, span):last-child,
+.app-toolbar .breadcrumbs > span:last-child button {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+}
+/* A breadcrumb that switches its database, catalog, or schema from a native menu
+   behind the chevron. */
+.scope-switcher {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+}
+.scope-switcher > button,
+.scope-switcher > span {
+  max-width: 240px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.scope-switcher-menu {
+  position: relative;
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 22px;
+  border-radius: 4px;
+  color: var(--muted);
+}
+.scope-switcher-menu:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+.scope-switcher-menu select {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  opacity: 0;
+  cursor: pointer;
+}
+.scope-switcher-menu select:disabled {
+  cursor: default;
 }
 .database-header .view-tabs {
   border: 0;
@@ -962,8 +1222,7 @@ select option {
   background: var(--hover);
 }
 .database-header .view-tabs button.active {
-  background: var(--surface);
-  box-shadow: 0 0 0 1px var(--border);
+  background: var(--selection);
   color: var(--text);
 }
 .database-driver {
@@ -978,6 +1237,9 @@ select option {
   .database-header {
     flex-wrap: wrap;
     gap: 5px 8px;
+    height: auto;
+    min-height: 3rem;
+    padding-block: 6px;
   }
   .database-header .breadcrumbs {
     flex-basis: 240px;
@@ -985,10 +1247,12 @@ select option {
 }
 @media (max-width: 719px) {
   .database-header {
-    padding: 7px 9px;
+    padding-inline: 9px;
   }
   .database-header .breadcrumbs {
     flex-basis: 100%;
+    flex-wrap: wrap;
+    row-gap: 5px;
   }
   .database-header .view-tabs {
     margin-left: 0;

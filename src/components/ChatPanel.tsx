@@ -18,6 +18,7 @@ interface ChatPanelProps {
   onClose: () => void;
   connection: Connection | null;
   database: string | null;
+  schemaName?: string;
   table: string | null;
   currentQuery: string;
   queryResult: SQLResponse | null;
@@ -30,6 +31,7 @@ export function ChatPanel({
   onClose,
   connection,
   database,
+  schemaName,
   table,
   currentQuery,
   queryResult,
@@ -45,13 +47,14 @@ export function ChatPanel({
     () => ({
       connection,
       database,
+      schemaName,
       table,
       currentQuery,
       queryResult,
       schema,
       setters,
     }),
-    [connection, database, table, currentQuery, queryResult, schema, setters],
+    [connection, database, schemaName, table, currentQuery, queryResult, schema, setters],
   );
 
   // Create tools
@@ -156,17 +159,17 @@ export function ChatPanel({
       }}
     >
       {/* Header */}
-      <div className="shrink-0 h-12 px-4 flex items-center justify-between border-b border-neutral-200 dark:border-neutral-800">
-        <div className="flex items-center gap-2">
-          <Sparkles size={16} className="muted" />
-          <h3 className="font-medium text-neutral-900 dark:text-neutral-100">
+      <div className="ai-panel-header app-toolbar window-controls-end justify-between border-b border-(--border)">
+        <div className="flex min-w-0 items-center gap-2">
+          <Sparkles size={16} className="muted shrink-0" />
+          <h3 className="truncate font-medium text-neutral-900 dark:text-neutral-100">
             {queryAdapterConfig.name}
           </h3>
         </div>
         <div className="flex items-center gap-1">
           <button
             onClick={clear}
-            className="p-1.5 text-neutral-500 hover:text-neutral-900 hover:bg-neutral-100 dark:hover:text-neutral-300 dark:hover:bg-neutral-800 rounded transition-colors"
+            className="toolbar-button"
             title="Clear chat"
           >
             <Trash2 size={16} />
@@ -174,7 +177,7 @@ export function ChatPanel({
           <button
             onClick={onClose}
             aria-label="Close AI assistant"
-            className="p-1.5 text-neutral-500 hover:text-neutral-900 hover:bg-neutral-100 dark:hover:text-neutral-300 dark:hover:bg-neutral-800 rounded transition-colors"
+            className="toolbar-button"
           >
             <X size={16} />
           </button>
@@ -184,6 +187,7 @@ export function ChatPanel({
       <div className="px-4 py-2 text-xs muted border-b border-(--border)">
         {connection?.name}
         {database ? ` / ${database}` : ""}
+        {schemaName ? ` / ${schemaName}` : ""}
         {table ? ` / ${table}` : ""}
       </div>
       {/* Messages */}

@@ -22,6 +22,8 @@ import {
   getAdapter,
   getTableViewQuery,
   listColumns,
+  listDatabases,
+  listSchemas,
   listTables,
   type ColumnInfo,
   type TableView,
@@ -29,6 +31,9 @@ import {
 import { splitStatements } from "../lib/sql";
 import type { QueryDraft } from "../lib/queries";
 import { usePreference } from "../lib/preferences";
+import { databasePath, databaseScope } from "../lib/database";
+import { useSchemaScope } from "../lib/schemaScope";
+import { ScopeSwitcher } from "./ScopeSwitcher";
 import { getConfig } from "../config";
 import type { Connection, SQLResponse } from "../types";
 
@@ -60,19 +65,21 @@ const viewLabels: Partial<Record<TableView, string>> = {
 function StructureView({
   connection,
   database,
+  schemaName,
   table,
   onOpenSQL,
 }: {
   connection: Connection;
   database?: string;
+  schemaName?: string;
   table: string;
   onOpenSQL: (sql: string) => void;
 }) {
   const [view, setView] = useState<TableView>("columns");
   const driver = connection.sql!.driver,
-    query = getTableViewQuery(driver, table, view);
+    query = getTableViewQuery(driver, table, view, schemaName);
   const result = useQuery({
-    queryKey: ["structure", connection.id, database, table, view],
+    queryKey: ["structure", connection.id, database, schemaName, table, view],
     queryFn: () => executeQuery(connection.id, query!, database),
     enabled: !!query,
   });
@@ -122,18 +129,24 @@ function StructureView({
 export function DatabaseWorkspace({
   connection,
   database,
+  pickedSchema,
   table,
   requestedQuery,
   onQueryOpened,
 }: {
   connection: Connection;
   database?: string;
+  pickedSchema?: string;
   table?: string;
   requestedQuery?: QueryDraft;
   onQueryOpened: (id: string) => void;
 }) {
+  // Tables are listed and qualified in schemaName; SQL typed in the editor runs
+  // with the picked schema as its session default where the driver allows it.
+  const schemaScope = useSchemaScope(connection, database, pickedSchema),
+    schemaName = schemaScope.schema;
   const driver = connection.sql!.driver,
-    scope = `${connection.id}:${database ?? ""}`,
+    scope = databaseScope(connection.id, database, schemaScope.selected),
     navigate = useNavigate(),
     queryClient = useQueryClient();
   const [tabs, setTabs] = usePreference<QueryDraft[]>(
@@ -183,9 +196,20 @@ export function DatabaseWorkspace({
     [aiOpen, setAiOpen] = useState(false);
   const controller = useRef<AbortController | null>(null);
   useEffect(() => () => controller.current?.abort(), []);
+  const adapter = getAdapter(driver);
+  const databases = useQuery({
+    queryKey: ["databases", connection.id],
+    queryFn: () => listDatabases(connection.id, driver),
+  });
+  const schemas = useQuery({
+    queryKey: ["schemas", connection.id, database],
+    queryFn: () => listSchemas(connection.id, driver, database),
+    enabled: !!adapter.listSchemasQuery && database !== undefined,
+  });
   const tables = useQuery({
-    queryKey: ["tables", connection.id, database],
-    queryFn: () => listTables(connection.id, driver, database),
+    queryKey: ["tables", connection.id, database, schemaName],
+    queryFn: () => listTables(connection.id, driver, database, schemaName),
+    enabled: !schemaScope.pending,
   });
   const schema: SchemaInfo = { tables: tables.data ?? [], columns };
   const result = activeTab ? results[activeTab.id] : undefined;
@@ -238,8 +262,8 @@ export function DatabaseWorkspace({
   };
   const loadColumns = async (name: string) => {
     const result = await queryClient.fetchQuery({
-      queryKey: ["table-columns", connection.id, database, name],
-      queryFn: () => listColumns(connection.id, driver, name, database),
+      queryKey: ["table-columns", connection.id, database, schemaName, name],
+      queryFn: () => listColumns(connection.id, driver, name, database, schemaName),
       staleTime: 300_000,
     });
     setColumns((current) => ({ ...current, [name]: result }));
@@ -268,6 +292,7 @@ export function DatabaseWorkspace({
                 abort.signal,
                 maxRows,
                 driver,
+                schemaScope.session,
               ),
             ]
           : await executeBatch(
@@ -277,6 +302,7 @@ export function DatabaseWorkspace({
               abort.signal,
               maxRows,
               driver,
+              schemaScope.session,
             );
     } catch (err) {
       responses = [
@@ -318,13 +344,17 @@ export function DatabaseWorkspace({
     void queryClient.invalidateQueries({
       queryKey: ["table-columns", connection.id, database],
     });
+    void queryClient.invalidateQueries({ queryKey: ["schemas", connection.id, database] });
+    void queryClient.invalidateQueries({ queryKey: ["structure", connection.id, database] });
     setColumns({});
     return last;
   };
   return (
     <>
       <main className="workspace database-workspace panel min-w-0 flex-1 flex flex-col">
-        <header className="database-header">
+        <header
+          className={`database-header app-toolbar ${aiOpen && getConfig().ai?.model ? "" : "window-controls-end"}`}
+        >
           <nav aria-label="Breadcrumb" className="breadcrumbs">
             <button onClick={() => navigate({ to: `/${connection.id}` })}>
               {connection.name}
@@ -332,15 +362,45 @@ export function DatabaseWorkspace({
             {database && (
               <>
                 <ChevronRight size={12} />
-                <button
-                  onClick={() =>
-                    navigate({
-                      to: `/${connection.id}/${encodeURIComponent(database)}`,
+                <ScopeSwitcher
+                  label={adapter.databaseLabel ?? "Database"}
+                  value={database}
+                  options={databases.data}
+                  onOpen={() =>
+                    navigate({ to: databasePath(connection.id, database, undefined, schemaScope.selected) })
+                  }
+                  onChange={(name) => void navigate({ to: databasePath(connection.id, name) })}
+                />
+              </>
+            )}
+            {database && adapter.listSchemasQuery && (
+              <>
+                <ChevronRight size={12} />
+                <ScopeSwitcher
+                  label="Schema"
+                  value={schemaName}
+                  options={schemas.data}
+                  defaultOption={schemaScope.defaultSchema}
+                  placeholder="Choose schema"
+                  title={
+                    adapter.sessionSchema
+                      ? undefined
+                      : "SQL in the editor resolves unqualified names in your default schema"
+                  }
+                  onOpen={() =>
+                    navigate({ to: databasePath(connection.id, database, undefined, schemaScope.selected) })
+                  }
+                  onChange={(schema) =>
+                    void navigate({
+                      to: databasePath(
+                        connection.id,
+                        database,
+                        undefined,
+                        schema === schemaScope.defaultSchema ? undefined : schema,
+                      ),
                     })
                   }
-                >
-                  {database}
-                </button>
+                />
               </>
             )}
             {table && (
@@ -382,12 +442,13 @@ export function DatabaseWorkspace({
           <span className="database-driver muted text-xs">{driver}</span>
           {getConfig().ai?.model && (
             <button
-              className={`icon-button ${aiOpen ? "active" : ""}`}
+              className="toolbar-button"
               aria-label="Toggle AI assistant"
               aria-expanded={aiOpen}
+              aria-pressed={aiOpen}
               onClick={() => setAiOpen(!aiOpen)}
             >
-              <Sparkles size={15} />
+              <Sparkles size={16} />
             </button>
           )}
         </header>
@@ -396,6 +457,8 @@ export function DatabaseWorkspace({
             key={table}
             connection={connection}
             database={database}
+            schemaName={schemaName}
+            scopeSchema={schemaScope.selected}
             table={table}
             onOpenSQL={(sql) => newTab(sql, table)}
           />
@@ -405,6 +468,7 @@ export function DatabaseWorkspace({
             key={table}
             connection={connection}
             database={database}
+            schemaName={schemaName}
             table={table}
             onOpenSQL={(sql) => newTab(sql, `${table} structure`)}
           />
@@ -609,6 +673,7 @@ export function DatabaseWorkspace({
             onClose={() => setAiOpen(false)}
             connection={connection}
             database={database ?? null}
+            schemaName={schemaName}
             table={table ?? null}
             currentQuery={activeTab?.sql ?? ""}
             queryResult={response}
@@ -620,9 +685,9 @@ export function DatabaseWorkspace({
               },
               executeQuery: run,
               runQuerySilent: (sql) =>
-                executeQuery(connection.id, sql, database),
+                executeQuery(connection.id, sql, database, [], undefined, undefined, schemaScope.session),
               runStatementSilent: (sql) =>
-                executeStatement(connection.id, sql, database),
+                executeStatement(connection.id, sql, database, [], undefined, schemaScope.session),
             }}
           />
         </Suspense>

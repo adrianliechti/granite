@@ -18,6 +18,7 @@ import {
   listColumns,
   parameterPlaceholder,
   primaryKeyPredicate,
+  tableIdentifier,
   type ColumnInfo,
 } from "../lib/adapters";
 import {
@@ -34,9 +35,11 @@ import {
   type DataSort,
 } from "../lib/data";
 import { usePreference } from "../lib/preferences";
+import { databaseScope } from "../lib/database";
 import type { Connection } from "../types";
 import { ResultsTable, ValueInput } from "./ResultsTable";
 
+// The grid's SQL names its tables with their schema, so it needs no session schema.
 async function loadRecords(
   connection: string,
   query: string,
@@ -51,6 +54,9 @@ async function loadRecords(
     database,
     params,
     signal,
+    undefined,
+    undefined,
+    30_000,
   );
   return { response, duration: performance.now() - start };
 }
@@ -417,18 +423,24 @@ function InsertRow({
 export function DataView({
   connection,
   database,
+  schemaName,
+  scopeSchema,
   table,
   onOpenSQL,
 }: {
   connection: Connection;
   database?: string;
+  // The schema tables are qualified in, and the explicit pick (if any) that
+  // scopes the table's saved filters and sorts.
+  schemaName?: string;
+  scopeSchema?: string;
   table: string;
   onOpenSQL: (sql: string) => void;
 }) {
   const driver = connection.sql!.driver,
     adapter = getAdapter(driver),
     queryClient = useQueryClient();
-  const scope = `${connection.id}:${database ?? ""}:${table}`;
+  const scope = `${databaseScope(connection.id, database, scopeSchema)}:${table}`;
   const [filters, setFilters] = usePreference<DataFilters>(
     `filters:${scope}`,
     emptyFilters,
@@ -436,6 +448,7 @@ export function DataView({
   const [sorting, setSorting] = usePreference<DataSort[]>(`sort:${scope}`, []);
   const [pageSize, setPageSize] = usePreference("page-size", 100),
     [page, setPage] = useState(0);
+  const [pageCursors, setPageCursors] = useState<Record<string, unknown>[]>([]);
   const [inserting, setInserting] = useState(false),
     [busy, setBusy] = useState(false);
   const [countState, setCountState] = useState<{
@@ -445,8 +458,8 @@ export function DataView({
     [counting, setCounting] = useState(false),
     [countError, setCountError] = useState("");
   const metadata = useQuery({
-    queryKey: ["table-columns", connection.id, database, table],
-    queryFn: () => listColumns(connection.id, driver, table, database),
+    queryKey: ["table-columns", connection.id, database, schemaName, table],
+    queryFn: () => listColumns(connection.id, driver, table, database, schemaName),
     staleTime: 300_000,
   });
   const columns = metadata.data ?? [];
@@ -462,6 +475,8 @@ export function DataView({
         sorting,
         page,
         pageSize,
+        schemaName,
+        pageCursors[page - 1],
       );
   } catch (err) {
     filterError = err instanceof Error ? err.message : "Invalid filter";
@@ -471,6 +486,7 @@ export function DataView({
       "records",
       connection.id,
       database,
+      schemaName,
       table,
       query?.query,
       query?.params,
@@ -482,23 +498,18 @@ export function DataView({
   });
   const response = records.data?.response,
     hasMore = (response?.rows?.length ?? 0) > pageSize;
-  const countKey = JSON.stringify([query?.countQuery, query?.params]);
+  const countKey = JSON.stringify([query?.countQuery, query?.countParams]);
   const keys = columns.filter((c) => c.primaryKey);
   const error =
     metadata.error?.message || filterError || records.error?.message;
   const refresh = () =>
     queryClient.invalidateQueries({
-      queryKey: ["records", connection.id, database, table],
+      queryKey: ["records", connection.id, database, schemaName, table],
     });
   const mutate = async (query: string, params: unknown[]) => {
     setBusy(true);
     try {
-      const result = await executeStatement(
-        connection.id,
-        query,
-        database,
-        params,
-      );
+      const result = await executeStatement(connection.id, query, database, params);
       if (result.rows_affected === 0 && /^UPDATE|^DELETE/.test(query))
         throw new Error("This row no longer exists. Refresh the table.");
       setCountState(null);
@@ -530,6 +541,7 @@ export function DataView({
             onApply={(next) => {
               setFilters(next);
               setPage(0);
+              setPageCursors([]);
               setCountError("");
             }}
           />
@@ -553,7 +565,7 @@ export function DataView({
             className="icon-button"
             aria-label="Open table SQL"
             disabled={!columns.length}
-            onClick={() => onOpenSQL(adapter.selectAllQuery(table, pageSize))}
+            onClick={() => onOpenSQL(adapter.selectAllQuery(table, pageSize, schemaName))}
           >
             <Code2 size={15} />
           </button>
@@ -586,6 +598,7 @@ export function DataView({
           onSort={(next) => {
             setSorting(next);
             setPage(0);
+            setPageCursors([]);
           }}
           rowKey={
             keys.length
@@ -597,7 +610,7 @@ export function DataView({
               ? async (row, name, value) => {
                   const key = predicate(row, 2);
                   await mutate(
-                    `UPDATE ${adapter.quoteIdentifier(table)} SET ${adapter.quoteIdentifier(name)} = ${parameterPlaceholder(
+                    `UPDATE ${tableIdentifier(adapter, table, schemaName)} SET ${adapter.quoteIdentifier(name)} = ${parameterPlaceholder(
                       driver,
                       1,
                       columns.find((column) => column.name === name),
@@ -612,7 +625,7 @@ export function DataView({
               ? async (row) => {
                   const key = predicate(row);
                   await mutate(
-                    `DELETE FROM ${adapter.quoteIdentifier(table)} WHERE ${key.clause}`,
+                    `DELETE FROM ${tableIdentifier(adapter, table, schemaName)} WHERE ${key.clause}`,
                     key.params,
                   );
                 }
@@ -646,7 +659,11 @@ export function DataView({
                       connection.id,
                       query.countQuery,
                       database,
-                      query.params,
+                      query.countParams,
+                      undefined,
+                      1,
+                      undefined,
+                      30_000,
                     );
                     setCountState({
                       key: countKey,
@@ -680,6 +697,7 @@ export function DataView({
                   onChange={(e) => {
                     setPageSize(Number(e.target.value));
                     setPage(0);
+                    setPageCursors([]);
                   }}
                 >
                   {[25, 50, 100, 250, 500].map((n) => (
@@ -709,7 +727,17 @@ export function DataView({
                 className="icon-button"
                 aria-label="Next page"
                 disabled={!hasMore || records.isFetching || busy || !!error}
-                onClick={() => setPage(page + 1)}
+                onClick={() => {
+                  if (query?.keyset) {
+                    const lastRow = response?.rows?.[pageSize - 1];
+                    if (!lastRow) return;
+                    const cursor = Object.fromEntries(
+                      keys.map((key) => [key.name, lastRow[key.name]]),
+                    );
+                    setPageCursors((current) => [...current.slice(0, page), cursor]);
+                  }
+                  setPage(page + 1);
+                }}
               >
                 <ChevronRight size={15} />
               </button>
@@ -721,7 +749,7 @@ export function DataView({
             columns={columns}
             onClose={() => setInserting(false)}
             onInsert={async (values) => {
-              const insert = buildInsert(adapter, table, columns, values);
+              const insert = buildInsert(adapter, table, columns, values, schemaName);
               await mutate(insert.query, insert.params);
             }}
           />

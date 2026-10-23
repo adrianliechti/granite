@@ -1,5 +1,10 @@
 import type { DatabaseAdapter, ColumnInfo, TableView } from './types';
-import { sqlLiteral } from './types.ts';
+import { sqlLiteral, tableIdentifier } from './types.ts';
+
+// The schema (owner) a metadata query looks in: the given one, or the session's.
+function ownerOf(schema?: string): string {
+  return schema ? `'${sqlLiteral(schema)}'` : `SYS_CONTEXT('USERENV', 'CURRENT_SCHEMA')`;
+}
 
 export const oracleAdapter: DatabaseAdapter = {
   driver: 'oracle',
@@ -22,12 +27,34 @@ export const oracleAdapter: DatabaseAdapter = {
     return `SELECT SYS_CONTEXT('USERENV', 'CON_NAME') as name FROM DUAL`;
   },
 
-  listTablesQuery() {
-    // List user tables (owned by current user), excluding Oracle internal tables
+  // A connection reaches one database (the service's PDB); its schemas are the
+  // users that own tables, and the session's current schema can be changed.
+  listSchemasQuery() {
+    return `
+      SELECT username AS name FROM all_users u
+      WHERE username = SYS_CONTEXT('USERENV', 'CURRENT_SCHEMA')
+        OR (oracle_maintained = 'N' AND EXISTS (SELECT 1 FROM all_tables t WHERE t.owner = u.username))
+      ORDER BY username
+    `;
+  },
+
+  parseSchemaNames(rows) {
+    return rows.map((row) => String(row.name ?? row.NAME));
+  },
+
+  defaultSchemaQuery() {
+    return `SELECT SYS_CONTEXT('USERENV', 'CURRENT_SCHEMA') AS name FROM DUAL`;
+  },
+
+  sessionSchema: true,
+
+  listTablesQuery(schema?: string) {
+    // Tables of the schema, excluding Oracle internal tables
     return `
       SELECT table_name as name 
-      FROM user_tables 
-      WHERE table_name NOT LIKE 'LOGMNR%' 
+      FROM all_tables 
+      WHERE owner = ${ownerOf(schema)}
+        AND table_name NOT LIKE 'LOGMNR%' 
         AND table_name NOT LIKE 'AQ$%'
         AND table_name NOT LIKE 'MVIEW$%'
         AND table_name NOT LIKE 'LOGSTDBY$%'
@@ -39,28 +66,29 @@ export const oracleAdapter: DatabaseAdapter = {
     `;
   },
 
-  listColumnsQuery(table: string) {
+  listColumnsQuery(table: string, schema?: string) {
+    const owner = ownerOf(schema);
     return `
       SELECT 
         c.column_name as name,
         c.data_type as type,
         CASE WHEN c.nullable = 'Y' THEN 1 ELSE 0 END as nullable,
         CASE WHEN cc.column_name IS NOT NULL THEN 1 ELSE 0 END as primary_key
-      FROM user_tab_columns c
+      FROM all_tab_columns c
       LEFT JOIN (
         SELECT cc.column_name
-        FROM user_constraints con
-        JOIN user_cons_columns cc ON con.constraint_name = cc.constraint_name
-        WHERE con.table_name = '${sqlLiteral(table)}' AND con.constraint_type = 'P'
+        FROM all_constraints con
+        JOIN all_cons_columns cc ON con.owner = cc.owner AND con.constraint_name = cc.constraint_name
+        WHERE con.owner = ${owner} AND con.table_name = '${sqlLiteral(table)}' AND con.constraint_type = 'P'
       ) cc ON c.column_name = cc.column_name
-      WHERE c.table_name = '${sqlLiteral(table)}'
+      WHERE c.owner = ${owner} AND c.table_name = '${sqlLiteral(table)}'
       ORDER BY c.column_id
     `;
   },
 
-  selectAllQuery(table: string, limit = 100) {
+  selectAllQuery(table: string, limit = 100, schema?: string) {
     // Oracle uses FETCH FIRST n ROWS ONLY (12c+) or ROWNUM
-    return `SELECT * FROM ${this.quoteIdentifier(table)} FETCH FIRST ${limit} ROWS ONLY`;
+    return `SELECT * FROM ${tableIdentifier(this, table, schema)} FETCH FIRST ${limit} ROWS ONLY`;
   },
 
   createDatabaseQuery() {
@@ -69,21 +97,21 @@ export const oracleAdapter: DatabaseAdapter = {
     return null;
   },
 
-  listConstraintsQuery(table: string) {
+  listConstraintsQuery(table: string, schema?: string) {
     return `
       SELECT 
         con.constraint_name,
         con.constraint_type,
         col.column_name
-      FROM user_constraints con
-      LEFT JOIN user_cons_columns col 
-        ON con.constraint_name = col.constraint_name
-      WHERE con.table_name = '${sqlLiteral(table)}'
+      FROM all_constraints con
+      LEFT JOIN all_cons_columns col 
+        ON con.owner = col.owner AND con.constraint_name = col.constraint_name
+      WHERE con.owner = ${ownerOf(schema)} AND con.table_name = '${sqlLiteral(table)}'
       ORDER BY con.constraint_name, col.position
     `;
   },
 
-  listForeignKeysQuery(table: string) {
+  listForeignKeysQuery(table: string, schema?: string) {
     return `
       SELECT 
         a.constraint_name,
@@ -91,24 +119,24 @@ export const oracleAdapter: DatabaseAdapter = {
         c_pk.owner AS foreign_schema,
         c_pk.table_name AS foreign_table,
         b.column_name AS foreign_column
-      FROM user_cons_columns a
-      JOIN user_constraints c ON a.constraint_name = c.constraint_name
+      FROM all_cons_columns a
+      JOIN all_constraints c ON a.owner = c.owner AND a.constraint_name = c.constraint_name
       JOIN all_constraints c_pk ON c.r_owner = c_pk.owner AND c.r_constraint_name = c_pk.constraint_name
       JOIN all_cons_columns b ON c_pk.owner = b.owner AND c_pk.constraint_name = b.constraint_name AND a.position = b.position
-      WHERE c.constraint_type = 'R'
+      WHERE c.owner = ${ownerOf(schema)} AND c.constraint_type = 'R'
         AND c.table_name = '${sqlLiteral(table)}'
       ORDER BY a.constraint_name, a.position
     `;
   },
 
-  listIndexesQuery(table: string) {
+  listIndexesQuery(table: string, schema?: string) {
     return `
       SELECT 
         index_name,
         uniqueness,
         index_type
-      FROM user_indexes
-      WHERE table_name = '${sqlLiteral(table)}'
+      FROM all_indexes
+      WHERE table_owner = ${ownerOf(schema)} AND table_name = '${sqlLiteral(table)}'
       ORDER BY index_name
     `;
   },

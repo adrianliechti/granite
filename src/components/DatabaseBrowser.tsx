@@ -7,6 +7,7 @@ import {
   Table2,
   ChevronRight,
   ChevronDown,
+  Folder,
   Star,
   Code2,
   RefreshCw,
@@ -14,29 +15,37 @@ import {
 } from "lucide-react";
 import {
   listDatabases,
+  listSchemas,
   listTables,
   createDatabase,
+  getDefaultSchema,
   supportsCreateDatabase,
   getAdapter,
+  tableIdentifier,
 } from "../lib/adapters";
 import type { Connection } from "../types";
 import { Dialog } from "./Dialog";
 import { RowMenu } from "./RowMenu";
 import { createTableTemplate } from "../lib/adapters/templates";
+import { databasePath } from "../lib/database";
 
+// Schemas passed to these callbacks are explicit picks: undefined stands for the
+// connection's default schema, which keeps the plain database paths.
 interface DatabaseBrowserProps {
   connection: Connection;
   expanded: Set<string>;
   onToggle: (key: string) => void;
-  onSelectDatabase: (database: string) => void;
-  onSelectTable: (database: string, table: string) => void;
-  onOpenQuery: (database: string, sql: string, title: string) => void;
+  onSelectDatabase: (database: string, schema?: string) => void;
+  onSelectTable: (database: string, table: string, schema?: string) => void;
+  onOpenQuery: (database: string, sql: string, title: string, schema?: string) => void;
   favorites: string[];
   onFavorite: (path: string) => void;
 }
 function Tables({
   connection,
   database,
+  schemaName,
+  pathSchema,
   activeTable,
   favorites,
   onFavorite,
@@ -45,6 +54,9 @@ function Tables({
 }: {
   connection: Connection;
   database: string;
+  // The schema to list and qualify tables in, and its explicit pick (if any).
+  schemaName?: string;
+  pathSchema?: string;
   activeTable?: string;
   favorites: string[];
   onFavorite: (path: string) => void;
@@ -52,15 +64,15 @@ function Tables({
   onOpenQuery: DatabaseBrowserProps["onOpenQuery"];
 }) {
   const tables = useQuery({
-    queryKey: ["tables", connection.id, database],
-    queryFn: () => listTables(connection.id, connection.sql!.driver, database),
+    queryKey: ["tables", connection.id, database, schemaName],
+    queryFn: () => listTables(connection.id, connection.sql!.driver, database, schemaName),
   });
   const names = tables.data ?? [];
   const adapter = getAdapter(connection.sql!.driver);
   return (
     <div className="tree-children">
       {names.map((table) => {
-        const path = `/${connection.id}/${encodeURIComponent(database)}/${encodeURIComponent(table)}`;
+        const path = databasePath(connection.id, database, table, pathSchema);
         return (
           <RowMenu
             key={table}
@@ -71,7 +83,12 @@ function Tables({
                 label: "Open in SQL editor",
                 icon: <Code2 size={14} />,
                 onSelect: () =>
-                  onOpenQuery(database, adapter.selectAllQuery(table), table),
+                  onOpenQuery(
+                    database,
+                    adapter.selectAllQuery(table, undefined, schemaName),
+                    table,
+                    pathSchema,
+                  ),
               },
               {
                 label: "Create table…",
@@ -79,8 +96,9 @@ function Tables({
                 onSelect: () =>
                   onOpenQuery(
                     database,
-                    createTableTemplate(adapter, names),
+                    createTableTemplate(adapter, names, schemaName),
                     "Create table",
+                    pathSchema,
                   ),
               },
               {
@@ -98,8 +116,9 @@ function Tables({
                 onSelect: () =>
                   onOpenQuery(
                     database,
-                    `DROP TABLE ${adapter.quoteIdentifier(table)};`,
+                    `DROP TABLE ${tableIdentifier(adapter, table, schemaName)};`,
                     `Delete ${table}`,
+                    pathSchema,
                   ),
               },
             ]}
@@ -134,6 +153,153 @@ function Tables({
     </div>
   );
 }
+// A database's schemas as tree nodes. Tables sit directly
+// under the database when the driver has no schema level or there is only one.
+function Schemas({
+  connection,
+  database,
+  active,
+  activeSchema,
+  activeTable,
+  expanded,
+  onToggle,
+  favorites,
+  onFavorite,
+  onSelectDatabase,
+  onSelectTable,
+  onOpenQuery,
+}: Omit<DatabaseBrowserProps, "connection" | "onSelectDatabase" | "onSelectTable"> & {
+  connection: Connection;
+  database: string;
+  active: boolean;
+  activeSchema?: string;
+  activeTable?: string;
+  onSelectDatabase: (schema?: string) => void;
+  onSelectTable: (table: string, schema?: string) => void;
+}) {
+  const driver = connection.sql!.driver,
+    adapter = getAdapter(driver),
+    hasSchemas = !!adapter.listSchemasQuery,
+    queryClient = useQueryClient();
+  const schemas = useQuery({
+    queryKey: ["schemas", connection.id, database],
+    queryFn: () => listSchemas(connection.id, driver, database),
+    enabled: hasSchemas,
+  });
+  const defaults = useQuery({
+    queryKey: ["default-schema", connection.id, database],
+    queryFn: () => getDefaultSchema(connection.id, driver, database),
+    enabled: hasSchemas,
+    staleTime: Infinity,
+  });
+  const tables = (schemaName?: string, pathSchema?: string, current = active) => (
+    <Tables
+      connection={connection}
+      database={database}
+      schemaName={schemaName}
+      pathSchema={pathSchema}
+      activeTable={current ? activeTable : undefined}
+      favorites={favorites}
+      onFavorite={onFavorite}
+      onSelect={(table) => onSelectTable(table, pathSchema)}
+      onOpenQuery={onOpenQuery}
+    />
+  );
+  if (!hasSchemas) return tables();
+  if (schemas.error || defaults.error)
+    return (
+      <div className="tree-children">
+        <p className="tree-message danger" role="alert">
+          {(schemas.error ?? defaults.error)!.message}
+        </p>
+      </div>
+    );
+  if (schemas.isPending || defaults.isPending)
+    return (
+      <div className="tree-children">
+        <p className="tree-message">Loading schemas…</p>
+      </div>
+    );
+  const names = schemas.data,
+    defaultSchema = defaults.data ?? undefined,
+    current = activeSchema ?? defaultSchema;
+  if (names.length <= 1) {
+    const only = names[0] ?? defaultSchema;
+    return tables(only, only === defaultSchema ? undefined : only);
+  }
+  return (
+    <div className="tree-children">
+      {names.map((schema) => {
+        const isDefault = schema === defaultSchema,
+          pathSchema = isDefault ? undefined : schema,
+          key = `${connection.id}:${database}:schema:${schema}`,
+          selected = active && schema === current,
+          // The default and the current schema start open; a toggle flips that.
+          open = expanded.has(key) !== (isDefault || selected);
+        return (
+          <div key={schema}>
+            <RowMenu
+              label={`Actions for schema ${schema}`}
+              className={`tree-row ${selected && !activeTable ? "active" : ""}`}
+              items={[
+                {
+                  label: "New query",
+                  icon: <Code2 size={14} />,
+                  onSelect: () => onOpenQuery(database, "", "New query", pathSchema),
+                },
+                {
+                  label: "Create table…",
+                  icon: <Plus size={14} />,
+                  onSelect: () =>
+                    onOpenQuery(
+                      database,
+                      createTableTemplate(
+                        adapter,
+                        queryClient.getQueryData<string[]>(["tables", connection.id, database, schema]),
+                        schema,
+                      ),
+                      "Create table",
+                      pathSchema,
+                    ),
+                },
+                null,
+                {
+                  label: "Refresh tables",
+                  icon: <RefreshCw size={14} />,
+                  onSelect: () => {
+                    void queryClient.invalidateQueries({
+                      queryKey: ["tables", connection.id, database, schema],
+                    });
+                  },
+                },
+              ]}
+            >
+              <button
+                className="tree-toggle"
+                aria-label={`${open ? "Collapse" : "Expand"} ${schema}`}
+                aria-expanded={open}
+                onClick={() => onToggle(key)}
+              >
+                {open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+              </button>
+              <button
+                className="tree-label"
+                aria-current={selected && !activeTable ? "page" : undefined}
+                onClick={() => onSelectDatabase(pathSchema)}
+                title={isDefault ? `${schema} (default schema)` : schema}
+              >
+                <Folder size={13} />
+                <span>{schema}</span>
+              </button>
+            </RowMenu>
+            {open && tables(schema, pathSchema, selected)}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 export function DatabaseBrowser({
   connection,
   expanded,
@@ -229,7 +395,7 @@ export function DatabaseBrowser({
           <div key={database}>
             <RowMenu
               label={`Actions for database ${database}`}
-              className={`tree-row ${active && !params.table ? "active" : ""}`}
+              className={`tree-row ${active && !params.table && !params.schema ? "active" : ""}`}
               items={[
                 {
                   label: "New query",
@@ -242,14 +408,7 @@ export function DatabaseBrowser({
                   onSelect: () =>
                     onOpenQuery(
                       database,
-                      createTableTemplate(
-                        getAdapter(connection.sql!.driver),
-                        queryClient.getQueryData<string[]>([
-                          "tables",
-                          connection.id,
-                          database,
-                        ]),
-                      ),
+                      createTableTemplate(getAdapter(connection.sql!.driver)),
                       "Create table",
                     ),
                 },
@@ -283,13 +442,18 @@ export function DatabaseBrowser({
               </button>
             </RowMenu>
             {open && (
-              <Tables
+              <Schemas
                 connection={connection}
                 database={database}
+                active={active}
+                activeSchema={active ? params.schema : undefined}
                 activeTable={active ? params.table : undefined}
+                expanded={expanded}
+                onToggle={onToggle}
                 favorites={favorites}
                 onFavorite={onFavorite}
-                onSelect={(table) => onSelectTable(database, table)}
+                onSelectDatabase={(schema) => onSelectDatabase(database, schema)}
+                onSelectTable={(table, schema) => onSelectTable(database, table, schema)}
                 onOpenQuery={onOpenQuery}
               />
             )}

@@ -2,6 +2,8 @@ package server
 
 import (
 	"context"
+	"database/sql"
+	"database/sql/driver"
 	"encoding/json"
 	"errors"
 	"io"
@@ -37,7 +39,7 @@ func TestOpenDatabaseDrivers(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			for _, database := range []string{"", "db with 'quotes'/and?symbols"} {
-				db, err := openDatabase(&SQLConfig{Driver: tt.driver, DSN: tt.dsn}, database)
+				db, err := openDatabase(&SQLConfig{Driver: tt.driver, DSN: tt.dsn}, database, "")
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -59,12 +61,31 @@ func TestOpenDatabaseRejectsInvalidDSN(t *testing.T) {
 		{Driver: "unsupported", DSN: "unused"},
 	} {
 		t.Run(config.Driver, func(t *testing.T) {
-			db, err := openDatabase(&config, "selected")
+			db, err := openDatabase(&config, "selected", "")
 			if err == nil {
 				db.Close()
 				t.Fatal("expected invalid connection configuration to fail")
 			}
 		})
+	}
+}
+
+func TestOpenDatabaseRejectsInvalidSchema(t *testing.T) {
+	for _, tt := range []struct {
+		config SQLConfig
+		schema string
+	}{
+		{SQLConfig{Driver: "sqlite", DSN: ":memory:"}, "tenant"},
+		{SQLConfig{Driver: "mysql", DSN: "user@tcp(localhost)/old"}, "tenant"},
+		{SQLConfig{Driver: "sqlserver", DSN: "sqlserver://localhost?database=old"}, "tenant"},
+		{SQLConfig{Driver: "postgres", DSN: "postgres://localhost/postgres"}, "tenant\x00other"},
+		{SQLConfig{Driver: "oracle", DSN: "user/password@tcp://localhost:1521/service"}, `quote"d`},
+	} {
+		db, err := openDatabase(&tt.config, "", tt.schema)
+		if err == nil {
+			db.Close()
+			t.Fatal("expected invalid schema selection to fail")
+		}
 	}
 }
 
@@ -118,15 +139,20 @@ func TestExecuteSQLSQLite(t *testing.T) {
 func TestTrinoDatabaseSelection(t *testing.T) {
 	for _, tt := range []struct {
 		database string
+		selected string
 		catalog  string
 		schema   string
 	}{
-		{"", "original", "public"},
-		{"warehouse.sales", "warehouse", "sales"},
-		{"schema with spaces", "original", "schema with spaces"},
-		{"warehouse.schema.with.dots", "warehouse", "schema.with.dots"},
+		{"", "", "original", "public"},
+		{"warehouse", "", "warehouse", "public"},
+		{"warehouse", "sales", "warehouse", "sales"},
+		{"catalog with spaces", "schema.with.dots", "catalog with spaces", "schema.with.dots"},
+		{"", "sales", "original", "sales"},
+		// links from before catalogs and schemas were separate levels
+		{"warehouse.sales", "", "warehouse", "sales"},
+		{"warehouse.schema.with.dots", "", "warehouse", "schema.with.dots"},
 	} {
-		t.Run(tt.database, func(t *testing.T) {
+		t.Run(tt.database+"/"+tt.schema, func(t *testing.T) {
 			requests := make(chan http.Header, 1)
 			backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
@@ -150,7 +176,7 @@ func TestTrinoDatabaseSelection(t *testing.T) {
 			u.User = url.User("test-user")
 			u.RawQuery = "catalog=original&schema=public&source=granite-test&session_properties=query_max_run_time%3A1m"
 			result, err := executeSQL(t.Context(), &SQLConfig{Driver: "trino", DSN: u.String()}, SQLRequest{
-				Query: "SELECT 1", Database: tt.database,
+				Query: "SELECT 1", Database: tt.database, Schema: tt.selected,
 			}, true)
 			if err != nil {
 				t.Fatal(err)
@@ -257,6 +283,37 @@ func TestConnectionTestDoesNotPersistConfiguration(t *testing.T) {
 		files, err := os.ReadDir(directory)
 		if err != nil || len(files) != 0 {
 			t.Fatalf("test saved a connection: %v, %v", files, err)
+		}
+	}
+}
+
+func TestSessionConnectorSetsUpEveryConnection(t *testing.T) {
+	connector, err := connectorFor("sqlite", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	db := sql.OpenDB(sessionConnector{connector, func(ctx context.Context, conn driver.Conn) error {
+		return execSession(ctx, conn, "PRAGMA user_version = 7")
+	}})
+	defer db.Close()
+	// Two connections at once: each in-memory database is its own session.
+	first, err := db.Conn(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer first.Close()
+	second, err := db.Conn(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer second.Close()
+	for _, conn := range []*sql.Conn{first, second} {
+		var version int
+		if err := conn.QueryRowContext(t.Context(), "PRAGMA user_version").Scan(&version); err != nil {
+			t.Fatal(err)
+		}
+		if version != 7 {
+			t.Fatalf("user_version = %d, want the session setup to have run", version)
 		}
 	}
 }

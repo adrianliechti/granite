@@ -89,12 +89,12 @@ export function UploadModal({
                 value={objectKey}
                 onChange={(e) => setObjectKey(e.target.value)}
                 placeholder="path/to/file.txt"
-                className="w-full px-3 py-2 text-sm font-mono border border-neutral-200 dark:border-neutral-700 rounded-lg bg-white dark:bg-neutral-800 text-neutral-900 dark:text-neutral-100 placeholder:text-neutral-400 focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500"
+                className="w-full px-3 py-2 text-sm font-mono border border-neutral-200 dark:border-neutral-700 rounded-lg bg-white dark:bg-neutral-800 text-neutral-900 dark:text-neutral-100 placeholder:text-neutral-400 focus:outline-none focus:ring-2 focus:ring-focus/30 focus:border-border-strong"
                 disabled={uploadMutation.isPending}
               />
               <div className="flex items-center gap-3 p-3 border border-neutral-200 dark:border-neutral-700 rounded-lg bg-neutral-50 dark:bg-neutral-800/50">
-                <div className="w-10 h-10 rounded-lg bg-blue-500/10 flex items-center justify-center">
-                  <File className="w-5 h-5 text-blue-500" />
+                <div className="w-10 h-10 rounded-lg bg-bg-active flex items-center justify-center">
+                  <File className="w-5 h-5 text-fg-muted" />
                 </div>
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-medium text-neutral-900 dark:text-neutral-100 truncate">
@@ -108,7 +108,7 @@ export function UploadModal({
                 <button
                   type="button"
                   onClick={() => fileInputRef.current?.click()}
-                  className="px-3 py-1.5 text-xs font-medium text-blue-500 hover:bg-blue-500/10 rounded-lg transition-colors"
+                  className="px-3 py-1.5 text-xs font-medium text-fg hover:bg-bg-hover rounded-lg transition-colors"
                 >
                   Change
                 </button>
@@ -120,11 +120,11 @@ export function UploadModal({
             <button
               type="button"
               onClick={() => fileInputRef.current?.click()}
-              className="w-full p-6 border-2 border-dashed border-neutral-200 dark:border-neutral-700 rounded-lg hover:border-blue-500/50 hover:bg-blue-500/5 transition-colors group"
+              className="w-full p-6 border-2 border-dashed border-neutral-200 dark:border-neutral-700 rounded-lg hover:border-border-strong hover:bg-bg-hover transition-colors group"
             >
               <div className="flex flex-col items-center gap-2">
-                <FileUp className="w-8 h-8 text-neutral-400 group-hover:text-blue-500 transition-colors" />
-                <span className="text-sm text-neutral-500 dark:text-neutral-400 group-hover:text-blue-500 transition-colors">
+                <FileUp className="w-8 h-8 text-neutral-400 group-hover:text-fg transition-colors" />
+                <span className="text-sm text-neutral-500 dark:text-neutral-400 group-hover:text-fg transition-colors">
                   Click to select a file
                 </span>
               </div>
@@ -158,7 +158,7 @@ export function UploadModal({
             disabled={
               !selectedFile || !objectKey.trim() || uploadMutation.isPending
             }
-            className="px-4 py-2 text-sm font-medium text-white bg-blue-500 hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg transition-colors flex items-center gap-2"
+            className="px-4 py-2 text-sm font-medium text-bg bg-fg hover:bg-fg/85 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg transition-colors flex items-center gap-2"
           >
             {uploadMutation.isPending && (
               <Loader2 className="w-3.5 h-3.5 animate-spin" />

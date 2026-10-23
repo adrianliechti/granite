@@ -67,7 +67,7 @@ export function CreateContainerModal({
             value={name}
             onChange={(e) => setName(e.target.value)}
             placeholder={`my-${containerSingular.toLowerCase()}`}
-            className="w-full px-3 py-2 text-sm border border-neutral-200 dark:border-neutral-700 rounded-lg bg-white dark:bg-neutral-800 text-neutral-900 dark:text-neutral-100 placeholder:text-neutral-400 focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500"
+            className="w-full px-3 py-2 text-sm border border-neutral-200 dark:border-neutral-700 rounded-lg bg-white dark:bg-neutral-800 text-neutral-900 dark:text-neutral-100 placeholder:text-neutral-400 focus:outline-none focus:ring-2 focus:ring-focus/30 focus:border-border-strong"
             autoFocus
             disabled={createMutation.isPending}
           />
@@ -102,7 +102,7 @@ export function CreateContainerModal({
           <button
             type="submit"
             disabled={!name.trim() || createMutation.isPending}
-            className="px-4 py-2 text-sm font-medium text-white bg-blue-500 hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg transition-colors flex items-center gap-2"
+            className="px-4 py-2 text-sm font-medium text-bg bg-fg hover:bg-fg/85 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg transition-colors flex items-center gap-2"
           >
             {createMutation.isPending && (
               <Loader2 className="w-3.5 h-3.5 animate-spin" />

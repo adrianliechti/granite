@@ -42,10 +42,12 @@ type SQLConfig struct {
 }
 
 type SQLRequest struct {
-	MaxRows  int    `json:"maxRows,omitempty"`
-	Query    string `json:"query"`
-	Params   []any  `json:"params"`
-	Database string `json:"database,omitempty"` // Optional: specify which database to query
+	TimeoutMS int    `json:"timeoutMs,omitempty"`
+	MaxRows   int    `json:"maxRows,omitempty"`
+	Query     string `json:"query"`
+	Params    []any  `json:"params"`
+	Database  string `json:"database,omitempty"` // Optional: specify which database to query
+	Schema    string `json:"schema,omitempty"`
 }
 
 type SQLResponse struct {

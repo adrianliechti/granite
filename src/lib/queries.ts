@@ -7,6 +7,7 @@ export interface QueryDraft {
 export interface QueryRequest extends QueryDraft {
   connection: string;
   database: string;
+  schema?: string;
 }
 
 export type OpenQuery = (
@@ -14,4 +15,5 @@ export type OpenQuery = (
   database: string,
   sql: string,
   title: string,
+  schema?: string,
 ) => void;

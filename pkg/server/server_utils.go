@@ -3,6 +3,8 @@ package server
 import (
 	"database/sql"
 	"strconv"
+
+	mssql "github.com/microsoft/go-mssqldb"
 )
 
 func rowsToJSON(rows *sql.Rows, maxRows int) ([]string, []map[string]any, bool, error) {
@@ -10,6 +12,15 @@ func rowsToJSON(rows *sql.Rows, maxRows int) ([]string, []map[string]any, bool, 
 
 	if err != nil {
 		return nil, nil, false, err
+	}
+
+	// SQL Server returns uniqueidentifier values as 16 raw bytes in its own
+	// mixed byte order; send them as the GUID text SQL Server accepts back.
+	guids := make([]bool, len(columns))
+	if types, err := rows.ColumnTypes(); err == nil {
+		for i, t := range types {
+			guids[i] = t.DatabaseTypeName() == "UNIQUEIDENTIFIER"
+		}
 	}
 
 	var result []map[string]any
@@ -36,7 +47,12 @@ func rowsToJSON(rows *sql.Rows, maxRows int) ([]string, []map[string]any, bool, 
 
 			switch v := val.(type) {
 			case []byte:
-				row[col] = string(v)
+				var id mssql.UniqueIdentifier
+				if guids[i] && id.Scan(v) == nil {
+					row[col] = id.String()
+				} else {
+					row[col] = string(v)
+				}
 			case int64:
 				if v > 9007199254740991 || v < -9007199254740991 {
 					row[col] = strconv.FormatInt(v, 10)

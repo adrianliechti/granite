@@ -1,5 +1,10 @@
 import type { DatabaseAdapter, ColumnInfo, TableView } from './types';
-import { sqlLiteral } from './types.ts';
+import { sqlLiteral as quoteLiteral } from './types.ts';
+
+// MySQL treats backslashes in string literals as escapes unless NO_BACKSLASH_ESCAPES is set.
+function sqlLiteral(value: string): string {
+  return quoteLiteral(value.replace(/\\/g, '\\\\'));
+}
 
 export const mysqlAdapter: DatabaseAdapter = {
   driver: 'mysql',

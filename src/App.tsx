@@ -13,6 +13,7 @@ import { WelcomePage } from "./components/WelcomePage";
 import { connectionsCollection } from "./lib/collections";
 import { encodePathSegments } from "./lib/adapters";
 import { usePreference } from "./lib/preferences";
+import { databasePath } from "./lib/database";
 import type { OpenQuery, QueryRequest } from "./lib/queries";
 
 const queryClient = new QueryClient({
@@ -31,20 +32,21 @@ function AppContent() {
   );
   const [addConnection, setAddConnection] = useState(false);
   const [queryRequest, setQueryRequest] = useState<QueryRequest | null>(null);
-  const [sidebarWidth, setSidebarWidth] = usePreference("sidebar-width", 248);
+  const [sidebarWidth, setSidebarWidth] = usePreference("sidebar-width", 240);
   const [collapsed, setCollapsed] = usePreference(
     "sidebar-collapsed",
     window.innerWidth < 720,
   );
-  const openQuery: OpenQuery = (connection, database, sql, title) => {
+  const openQuery: OpenQuery = (connection, database, sql, title, schema) => {
     setQueryRequest({
       id: crypto.randomUUID(),
       connection,
       database,
       sql,
       title,
+      schema,
     });
-    void navigate({ to: `/${connection}/${encodeURIComponent(database)}` });
+    void navigate({ to: databasePath(connection, database, undefined, schema) });
     if (window.innerWidth < 720) setCollapsed(true);
   };
   const queryOpened = useCallback((id: string) => {
@@ -94,9 +96,11 @@ function AppContent() {
     <div className="app-shell">
       <div
         className={`sidebar-wrap ${collapsed ? "is-collapsed" : ""}`}
-        style={{
-          width: collapsed ? 44 : Math.min(420, Math.max(190, sidebarWidth)),
-        }}
+        style={
+          collapsed
+            ? undefined
+            : { width: Math.min(420, Math.max(190, sidebarWidth)) }
+        }
       >
         <Sidebar
           showAddModal={addConnection}
@@ -157,13 +161,15 @@ function AppContent() {
       )}
       {connection?.sql ? (
         <DatabaseWorkspace
-          key={`${connection.id}:${connection.sql.driver}:${params.database ?? ""}`}
+          key={JSON.stringify([connection.id, connection.sql.driver, params.database, params.schema])}
           connection={connection}
           database={params.database}
+          pickedSchema={params.schema}
           table={params.table}
           requestedQuery={
             queryRequest?.connection === connection.id &&
-            queryRequest.database === params.database
+            queryRequest.database === params.database &&
+            queryRequest.schema === params.schema
               ? queryRequest
               : undefined
           }
